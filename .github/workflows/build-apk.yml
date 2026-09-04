@@ -8,9 +8,12 @@ on:
     paths:
       - "maestro/**"
       - "app/**"
+      - "services/**"
+      - "android_src/**"
       - "main.py"
       - "buildozer.spec"
       - "requirements.txt"
+      - "tests/**"
       - ".github/workflows/build-apk.yml"
   pull_request:
     branches:
@@ -32,7 +35,7 @@ jobs:
           sudo apt-get install -y build-essential git zip unzip openjdk-17-jdk autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev cmake libffi-dev libssl-dev
           java -version
 
-      - name: Rodar testes do núcleo e da IA
+      - name: Rodar testes do núcleo, IA e captura
         run: |
           python3 tests/test_env_integration.py
           python3 tests/test_heuristic_agent.py
