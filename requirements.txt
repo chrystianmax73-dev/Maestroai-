@@ -1,0 +1,3 @@
+kivy>=2.3.0
+# Buildozer e dependências de empacotamento ficam no host de build (Linux)
+# Não são necessárias para rodar no desktop.
