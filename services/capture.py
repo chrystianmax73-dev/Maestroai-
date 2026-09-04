@@ -13,6 +13,8 @@ from pathlib import Path
 from android.broadcast import BroadcastReceiver
 from jnius import PythonJavaClass, autoclass, java_method
 
+from maestro.vision.screen_perception import ScreenPerception
+
 
 RESULT_ACTION = "org.maestro.CAPTURE_RESULT"
 STOP_ACTION = "org.maestro.CAPTURE_STOP"
@@ -49,9 +51,14 @@ class CaptureService:
         self.last_frame_path = ""
         self.width = 0
         self.height = 0
+        self.perception = ScreenPerception()
+        self.last_perception = {}
         self.status_path = Path(
             str(self.context.getFilesDir().getAbsolutePath())
         ) / "maestro_capture_status.json"
+        self.perception_path = Path(
+            str(self.context.getFilesDir().getAbsolutePath())
+        ) / "maestro_perception.json"
         self._write_status(error="Aguardando token de MediaProjection")
 
     def _write_status(self, **extra):
@@ -64,6 +71,7 @@ class CaptureService:
             "last_frame": self.last_frame_path,
             "updated_at": time.time(),
             "error": "",
+            "perception": self.last_perception,
         }
         data.update(extra)
         tmp = self.status_path.with_suffix(".tmp")
@@ -151,7 +159,6 @@ class CaptureService:
                 None,
             )
 
-            # Android exige que a aplicação observe o encerramento da sessão.
             self.projection_callback = ProjectionCallback(self.context)
             self.projection.registerCallback(
                 self.projection_callback, Handler(Looper.getMainLooper())
@@ -174,7 +181,6 @@ class CaptureService:
             WindowManagerParams = autoclass("android.view.WindowManager$LayoutParams")
             PixelFormat = autoclass("android.graphics.PixelFormat")
             Gravity = autoclass("android.view.Gravity")
-            Build = autoclass("android.os.Build$VERSION")
 
             view = TextView(self.context)
             view.setText("MAESTRO VISION\\nCAPTURA: ATIVA\\nAguardando frames…")
@@ -212,12 +218,18 @@ class CaptureService:
         if self.overlay is None:
             return
         try:
+            p = self.last_perception
+            scene = float(p.get("scene_confidence", 0.0))
+            field = float(p.get("field_confidence", 0.0))
+            ball = float(p.get("ball_confidence", 0.0))
+            scene_label = "CAMPO" if scene >= 0.55 else "INCERTO"
+            ball_label = "sim" if ball >= 0.55 else "não confirmado"
             text = (
                 "MAESTRO VISION\\n"
-                f"CAPTURA: ATIVA\\n"
-                f"FPS: {self.fps:.1f}\\n"
+                f"CAPTURA: ATIVA  FPS: {self.fps:.1f}\\n"
                 f"TELA: {self.width}x{self.height}\\n"
-                f"AMOSTRA: {'OK' if self.last_frame_path else 'aguardando'}\\n"
+                f"CENA: {scene_label} {scene:.0%}\\n"
+                f"GRAMADO: {field:.0%}  BOLA: {ball_label} {ball:.0%}\\n"
                 "ANÁLISE: somente leitura"
             )
             self.overlay.setText(text)
@@ -250,7 +262,6 @@ class CaptureService:
             if elapsed >= 1.0:
                 self.fps = self.frame_count / elapsed
                 self.frame_count = 0
-                self.window_start = now
                 self._save_sample(image)
                 self._update_overlay()
                 self._write_status()
@@ -295,6 +306,25 @@ class CaptureService:
             with open(out_path, "wb") as fp:
                 cropped.compress(CompressFormat.JPEG, 75, fp)
             self.last_frame_path = str(out_path)
+
+            # Percepção ocorre antes do bitmap ser reciclado. Só amostramos
+            # 48x27 pontos, uma vez por segundo, para manter baixo o custo.
+            def pixel_at(x, y):
+                px = int(cropped.getPixel(int(x), int(y)))
+                return (
+                    (px >> 16) & 0xFF,
+                    (px >> 8) & 0xFF,
+                    px & 0xFF,
+                )
+
+            result = self.perception.analyze(width, height, pixel_at)
+            self.last_perception = result.to_dict()
+            tmp = self.perception_path.with_suffix(".tmp")
+            tmp.write_text(
+                json.dumps(self.last_perception, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            tmp.replace(self.perception_path)
         finally:
             if cropped is not None and cropped is not bitmap:
                 try:
