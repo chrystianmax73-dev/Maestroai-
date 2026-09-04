@@ -12,25 +12,27 @@ def test_buildozer_spec_has_required_keys():
     assert spec_path.exists(), "buildozer.spec não encontrado"
     parser = configparser.ConfigParser(); parser.read(spec_path, encoding="utf-8")
     app = parser["app"]
-    required = ["title", "package.name", "package.domain", "source.dir", "version", "requirements", "services", "android.api", "android.minapi", "android.ndk", "android.archs", "android.permissions", "android.add_src", "android.activity_class_name"]
+    required = ["title", "package.name", "package.domain", "source.dir", "version", "requirements", "services", "android.api", "android.minapi", "android.ndk", "android.archs", "android.permissions", "android.add_src"]
     missing = [k for k in required if k not in app]
     assert not missing, f"buildozer.spec sem as chaves: {missing}"
+    assert app["version"] == "0.3.1"
     assert "kivy" in app["requirements"] and "python3" in app["requirements"]
-    assert "capture:services/capture.py" in app["services"]
-    assert "foregroundServiceType=mediaProjection" in app["services"]
+    assert app["services"].strip() == "capture:services/capture.py:foreground"
+    assert "foregroundServiceType=mediaProjection" not in app["services"]
+    assert "sticky" not in app["services"]
     assert "FOREGROUND_SERVICE_MEDIA_PROJECTION" in app["android.permissions"]
     assert "SYSTEM_ALERT_WINDOW" in app["android.permissions"]
-    assert "CaptureActivity" in app["android.activity_class_name"]
+    assert "android.activity_class_name" not in app
+    assert "java" in app["source.include_exts"]
 
 
 def test_project_sources_exist():
     parser = configparser.ConfigParser(); parser.read(ROOT / "buildozer.spec", encoding="utf-8")
     patterns = parser["app"].get("source.include_patterns", "")
-    assert all(x in patterns for x in ("maestro/**", "app/**", "services/**"))
-    assert (ROOT / "android_src/org/maestro/capture/CaptureActivity.java").exists()
+    assert all(x in patterns for x in ("maestro/**", "app/**", "services/**", "android_src/**"))
     assert (ROOT / "android_src/org/maestro/capture/ProjectionCallback.java").exists()
+    assert (ROOT / "android_src/org/maestro/capture/CaptureActivity.java").exists()
     assert (ROOT / "app/main.py").exists()
-    assert (ROOT / "app/main_v2.py").exists()
 
 
 def test_capture_is_observation_only():
@@ -42,26 +44,22 @@ def test_capture_is_observation_only():
 
 
 def test_capture_activation_is_explicit():
-    java = (ROOT / "android_src/org/maestro/capture/CaptureActivity.java").read_text(encoding="utf-8")
     controller = (ROOT / "maestro/vision/capture_controller.py").read_text(encoding="utf-8")
-    assert "CAPTURE_RESULT" in java
-    assert "MediaProjectionManager" in java
+    assert "MediaProjectionManager" in controller
     assert "startActivityForResult" in controller
     assert "REQUEST_CODE = 4901" in controller
-    assert "requestCaptureIfNeeded();" not in java
+    assert "CAPTURE_REQUEST" in controller
+    assert "_on_activity_result" in controller
+    assert "ServiceCapture" in controller
 
 
 def test_service_bridge_matches_buildozer_name():
     spec = configparser.ConfigParser(); spec.read(ROOT / "buildozer.spec", encoding="utf-8")
     service = (ROOT / "services/capture.py").read_text(encoding="utf-8")
     controller = (ROOT / "maestro/vision/capture_controller.py").read_text(encoding="utf-8")
-    java = (ROOT / "android_src/org/maestro/capture/CaptureActivity.java").read_text(encoding="utf-8")
     assert spec["app"]["package.name"] == "maestrogrid"
-    assert "Class.forName(\"org.maestro.maestrogrid.ServiceCapture\")" in java
-    assert 'getMethod("start", android.app.Activity.class, String.class)' in java
-    assert 'invoke(null, this, "capture")' in java
+    assert "org.maestro.maestrogrid.ServiceCapture" in controller
     assert "CAPTURE_STOP" in controller
-    assert "ServiceCapture.stop" not in controller
     assert "CAPTURE_RESULT" in service
     assert "CAPTURE_STOP" in service
     assert "getParcelableExtra(\"data_intent\")" in service
@@ -81,12 +79,26 @@ def test_workflow_file_exists_and_has_expected_steps():
     content = workflow_path.read_text(encoding="utf-8")
     assert "buildozer" in content and "android debug" in content
     assert "upload-artifact" in content and "workflow_dispatch" in content
+    assert "ubuntu-22.04" in content and 'python-version: "3.11"' in content
+    assert 'java-version: "17"' in content
 
 
-def test_main_launcher_imports_stable_app():
+def test_main_launcher_has_startup_diagnostics():
     launcher = (ROOT / "main.py").read_text(encoding="utf-8")
     assert "from app.main import MaestroMobileApp" in launcher
+    assert "maestro_startup.log" in launcher
+    assert "traceback.format_exc()" in launcher
+    assert "except BaseException" in launcher
     assert "main_v2" not in launcher
+
+
+def test_app_uses_capture_controller():
+    app = (ROOT / "app/main.py").read_text(encoding="utf-8")
+    assert "CaptureController" in app
+    assert "self.capture.request_capture()" in app
+    assert "self.capture.stop()" in app
+    assert "CAPTURE_REQUEST" not in app
+    assert "def _capture_broadcast" not in app
 
 
 if __name__ == "__main__":
