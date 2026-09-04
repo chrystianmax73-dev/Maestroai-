@@ -29,6 +29,7 @@ def test_project_sources_exist():
     assert all(x in patterns for x in ("maestro/**", "app/**", "services/**"))
     assert (ROOT / "android_src/org/maestro/capture/CaptureActivity.java").exists()
     assert (ROOT / "android_src/org/maestro/capture/ProjectionCallback.java").exists()
+    assert (ROOT / "app/main.py").exists()
     assert (ROOT / "app/main_v2.py").exists()
 
 
@@ -67,10 +68,10 @@ def test_service_bridge_matches_buildozer_name():
 
 
 def test_ui_has_real_lab_controls():
-    app = (ROOT / "app/main_v2.py").read_text(encoding="utf-8")
-    for label in ("ABRIR LABORATÓRIO", "TESTAR VISÃO E CAPTURA", "INICIAR IA", "PARAR IA", "DIAGNÓSTICO", "NOVO JOGO", "PASSE", "DRIBLE", "LANÇAMENTO", "CRUZAMENTO", "FINALIZAR", "MAESTRO LAB", "FOOTBALL INTELLIGENCE LAB"):
+    app = (ROOT / "app/main.py").read_text(encoding="utf-8")
+    for label in ("ENTRAR NO LABORATÓRIO", "TESTAR VISÃO / CAPTURA", "JOGAR SOZINHO", "PARAR IA", "VISÃO", "AGENTE", "NOVO JOGO", "PASSE", "DRIBLE", "LANÇAMENTO", "CRUZAMENTO", "FINALIZAR"):
         assert label in app, f"controle ausente: {label}"
-    assert "ScreenManager" in app and "_poll" in app and "open_diagnostics" in app
+    assert "ScreenManager" in app and "open_diagnostics" in app
     assert "toggle_capture" in app and "toggle_ai" in app
 
 
@@ -82,9 +83,10 @@ def test_workflow_file_exists_and_has_expected_steps():
     assert "upload-artifact" in content and "workflow_dispatch" in content
 
 
-def test_main_launcher_imports_app_correctly():
+def test_main_launcher_imports_stable_app():
     launcher = (ROOT / "main.py").read_text(encoding="utf-8")
-    assert "from app.main_v2 import MaestroMobileApp" in launcher
+    assert "from app.main import MaestroMobileApp" in launcher
+    assert "main_v2" not in launcher
 
 
 if __name__ == "__main__":
