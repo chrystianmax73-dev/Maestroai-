@@ -35,10 +35,11 @@ jobs:
           sudo apt-get install -y build-essential git zip unzip openjdk-17-jdk autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev cmake libffi-dev libssl-dev
           java -version
 
-      - name: Rodar testes do núcleo, IA e captura
+      - name: Rodar testes do núcleo, IA, percepção e empacotamento
         run: |
           python3 tests/test_env_integration.py
           python3 tests/test_heuristic_agent.py
+          python3 tests/test_screen_perception.py
           python3 tests/test_packaging.py
 
       - name: Instalar Buildozer
