@@ -1,0 +1,51 @@
+name: Build Android APK
+
+# Gera o APK debug do Maestro Grid via Buildozer e publica como artifact
+# da execução. Não depende de nenhum serviço externo além do próprio
+# GitHub Actions e dos repositórios públicos de pacotes (pip/Android SDK).
+
+on:
+  push:
+    branches:
+      - main
+      - "feat/**"
+    paths:
+      - "maestro/**"
+      - "app/**"
+      - "main.py"
+      - "buildozer.spec"
+      - "requirements.txt"
+      - ".github/workflows/build-apk.yml"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch: {}
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Rodar testes do núcleo e da IA (rápidos, sem Android)
+        run: |
+          python3 tests/test_env_integration.py
+          python3 tests/test_heuristic_agent.py
+
+      - name: Build do APK com Buildozer
+        id: buildozer
+        uses: ArtemSBulgakov/buildozer-action@v1
+        with:
+          command: buildozer android debug
+          buildozer_version: stable
+
+      - name: Publicar APK como artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: maestro-grid-debug-apk
+          path: ${{ steps.buildozer.outputs.filename }}
+          if-no-files-found: error
+          retention-days: 30
