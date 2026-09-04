@@ -29,6 +29,7 @@ def test_project_sources_exist():
     assert all(x in patterns for x in ("maestro/**", "app/**", "services/**"))
     assert (ROOT / "android_src/org/maestro/capture/CaptureActivity.java").exists()
     assert (ROOT / "android_src/org/maestro/capture/ProjectionCallback.java").exists()
+    assert (ROOT / "app/main_v2.py").exists()
 
 
 def test_capture_is_observation_only():
@@ -41,7 +42,7 @@ def test_capture_is_observation_only():
 
 def test_capture_activation_is_explicit():
     java = (ROOT / "android_src/org/maestro/capture/CaptureActivity.java").read_text(encoding="utf-8")
-    app = (ROOT / "app/main.py").read_text(encoding="utf-8")
+    app = (ROOT / "app/main_v2.py").read_text(encoding="utf-8")
     assert "CAPTURE_RESULT" in java
     assert "MediaProjectionManager" in java
     assert "org.maestro.CAPTURE_REQUEST" in app
@@ -54,12 +55,9 @@ def test_service_bridge_matches_buildozer_name():
     controller = (ROOT / "maestro/vision/capture_controller.py").read_text(encoding="utf-8")
     java = (ROOT / "android_src/org/maestro/capture/CaptureActivity.java").read_text(encoding="utf-8")
     assert spec["app"]["package.name"] == "maestrogrid"
-    # p4a gera ServiceCapture a partir de services = capture:services/capture.py.
-    # A Activity resolve a classe e invoca o método start por reflexão.
     assert "Class.forName(\"org.maestro.maestrogrid.ServiceCapture\")" in java
     assert 'getMethod("start", android.app.Activity.class, String.class)' in java
     assert 'invoke(null, this, "capture")' in java
-    # O controller não precisa conhecer a implementação gerada pelo p4a para parar.
     assert "CAPTURE_STOP" in controller
     assert "ServiceCapture.stop" not in controller
     assert "CAPTURE_RESULT" in service
@@ -68,10 +66,10 @@ def test_service_bridge_matches_buildozer_name():
 
 
 def test_ui_has_real_lab_controls():
-    app = (ROOT / "app/main.py").read_text(encoding="utf-8")
-    for label in ("ENTRAR NO LABORATÓRIO", "TESTAR VISÃO / CAPTURA", "JOGAR SOZINHO", "PARAR IA", "PAUSAR", "NOVO JOGO", "PASSE", "DRIBLE", "LANÇAMENTO", "CRUZAMENTO", "FINALIZAR", "MAESTRO VISION"):
+    app = (ROOT / "app/main_v2.py").read_text(encoding="utf-8")
+    for label in ("ABRIR LABORATÓRIO", "TESTAR VISÃO E CAPTURA", "INICIAR IA", "PARAR IA", "DIAGNÓSTICO", "NOVO JOGO", "PASSE", "DRIBLE", "LANÇAMENTO", "CRUZAMENTO", "FINALIZAR", "MAESTRO LAB", "FOOTBALL INTELLIGENCE LAB"):
         assert label in app, f"controle ausente: {label}"
-    assert "ScreenManager" in app and "poll_capture" in app and "open_diagnostics" in app
+    assert "ScreenManager" in app and "_poll" in app and "open_diagnostics" in app
 
 
 def test_workflow_file_exists_and_has_expected_steps():
@@ -84,7 +82,7 @@ def test_workflow_file_exists_and_has_expected_steps():
 
 def test_main_launcher_imports_app_correctly():
     launcher = (ROOT / "main.py").read_text(encoding="utf-8")
-    assert "from app.main import MaestroMobileApp" in launcher
+    assert "from app.main_v2 import MaestroMobileApp" in launcher
 
 
 if __name__ == "__main__":
