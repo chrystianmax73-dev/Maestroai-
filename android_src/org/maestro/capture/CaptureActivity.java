@@ -19,8 +19,8 @@ import org.maestro.maestrogrid.ServiceCapture;
  * Android consent/controller bridge for Maestro Vision.
  *
  * The Python UI asks for capture by broadcasting CAPTURE_REQUEST. This class
- * then performs the official Android consent flow and starts the existing
- * foreground capture service. No input injection is performed.
+ * performs the official Android consent flow and starts the foreground capture
+ * service. No input injection is performed.
  */
 public class CaptureActivity extends PythonActivity {
     private static final int REQUEST_CAPTURE = 4901;
@@ -43,7 +43,11 @@ public class CaptureActivity extends PythonActivity {
             }
         };
         IntentFilter filter = new IntentFilter(REQUEST_ACTION);
-        registerReceiver(requestReceiver, filter);
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(requestReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(requestReceiver, filter);
+        }
     }
 
     @Override
