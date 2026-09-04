@@ -1,13 +1,25 @@
 """
-Maestro Mobile — Vertical Slice (Kivy)
+Maestro Mobile — v0.2 (Kivy)
 ======================================
-Interface mobile que consome MaestroGridEnv sem alterar sua lógica.
+Interface mobile que consome MaestroGridEnv (e, na v0.2, também o
+HeuristicAgent) sem alterar a lógica de nenhum dos dois.
 
 Arquitetura preparada para cursor futuro:
 - `controlled_player_id` existe no estado da UI e é independente de
   `ball.owner_id`. Na v1, ações são sempre executadas pelo dono da bola
   (exigência atual do ambiente). No futuro, o cursor poderá selecionar
   qualquer jogador do time controlado sem quebrar a interface.
+
+Modo autônomo (v0.2):
+- "JOGAR SOZINHO" liga um `Clock.schedule_interval` que, a cada tick,
+  pede uma ação ao `HeuristicAgent` e a executa via `_execute()` — o
+  MESMO caminho usado pelas ações manuais, então tudo que já valida e
+  atualiza a UI continua valendo sem duplicação de lógica.
+- Enquanto a IA está ativa, os botões de ação manual ficam desabilitados
+  para não haver dois "atores" decidindo ao mesmo tempo. Ao parar a IA,
+  o controle manual volta imediatamente.
+- 100% offline: o agente não faz nenhuma chamada de rede, não depende
+  de serviço externo, e só usa a API pública já existente do ambiente.
 """
 
 from __future__ import annotations
@@ -33,7 +45,7 @@ from kivy.uix.popup import Popup
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.widget import Widget
 
-from maestro import Action, ActionType, MaestroGridEnv
+from maestro import Action, ActionType, HeuristicAgent, MaestroGridEnv
 
 
 # ---------------------------------------------------------------------------
@@ -197,6 +209,10 @@ class PlayerLabelOverlay(Widget):
 class MaestroMobileApp(App):
     title = "Maestro Grid"
 
+    # Intervalo base (segundos) entre decisões da IA em velocidade 1x
+    BASE_AI_INTERVAL = 0.6
+    SPEED_OPTIONS = (0.5, 1.0, 2.0, 4.0)
+
     def build(self):
         from kivy.uix.floatlayout import FloatLayout
 
@@ -206,6 +222,13 @@ class MaestroMobileApp(App):
         # Preparado para cursor futuro: controlado pelo usuário, independente da bola
         self.controlled_player_id: int = -1
         self.user_team = "A"  # time que o usuário comanda nesta vertical slice
+
+        # --- Modo autônomo (v0.2) ---
+        self.agent = HeuristicAgent(seed=42)
+        self.autonomous = False
+        self.sim_speed = 1.0
+        self._ai_event = None
+        self._speed_buttons: dict[float, Button] = {}
 
         root = BoxLayout(orientation="vertical", padding=dp(6), spacing=dp(4))
 
@@ -231,6 +254,45 @@ class MaestroMobileApp(App):
         )
         self.status.bind(size=self.status.setter("text_size"))
         root.add_widget(self.status)
+
+        # --- Modo (MANUAL / IA) — indicação clara do status da partida ---
+        self.mode_label = Label(
+            text="Modo: MANUAL",
+            size_hint_y=None,
+            height=dp(24),
+            font_size=dp(13),
+            bold=True,
+            color=(0.3, 0.9, 1.0, 1),
+        )
+        root.add_widget(self.mode_label)
+
+        # --- Controles da IA: JOGAR SOZINHO / PARAR IA ---
+        ai_controls = BoxLayout(
+            orientation="horizontal", size_hint_y=None, height=dp(44), spacing=dp(6)
+        )
+        self.btn_play_solo = Button(text="JOGAR SOZINHO", font_size=dp(13))
+        self.btn_play_solo.bind(on_press=self.on_start_autonomous)
+        self.btn_stop_ai = Button(text="PARAR IA", font_size=dp(13), disabled=True)
+        self.btn_stop_ai.bind(on_press=self.on_stop_autonomous)
+        ai_controls.add_widget(self.btn_play_solo)
+        ai_controls.add_widget(self.btn_stop_ai)
+        root.add_widget(ai_controls)
+
+        # --- Controle de velocidade da simulação ---
+        speed_row = BoxLayout(
+            orientation="horizontal", size_hint_y=None, height=dp(36), spacing=dp(4)
+        )
+        speed_row.add_widget(
+            Label(text="Velocidade:", size_hint_x=None, width=dp(78), font_size=dp(12))
+        )
+        for speed in self.SPEED_OPTIONS:
+            label = f"{speed:g}x"
+            btn = Button(text=label, font_size=dp(12))
+            btn.bind(on_press=lambda b, s=speed: self.on_set_speed(s))
+            self._speed_buttons[speed] = btn
+            speed_row.add_widget(btn)
+        root.add_widget(speed_row)
+        self._refresh_speed_buttons()
 
         # --- Campo (FieldWidget + overlay de números) ---
         field_container = FloatLayout(size_hint_y=0.50)
@@ -448,6 +510,8 @@ class MaestroMobileApp(App):
     # ------------------------------------------------------------------
 
     def on_reset(self, _btn):
+        if self.autonomous:
+            self.on_stop_autonomous(None)
         self.state, info = self.env.reset()
         self.last_info = info
         self.controlled_player_id = (
@@ -484,6 +548,68 @@ class MaestroMobileApp(App):
         self._refresh_ui()
         if done:
             self.status.text += "  |  FIM DE PARTIDA"
+            if self.autonomous:
+                self.on_stop_autonomous(None)
+
+    # ------------------------------------------------------------------
+    # Modo autônomo (IA)
+    # ------------------------------------------------------------------
+
+    def on_start_autonomous(self, _btn):
+        if not self.state:
+            return
+        if self.state.owner() is None:
+            self.status.text = "Sem dono da bola — não é possível iniciar a IA"
+            return
+        self.autonomous = True
+        self._clear_targets()
+        self.action_grid.disabled = True
+        self.btn_play_solo.disabled = True
+        self.btn_stop_ai.disabled = False
+        self.mode_label.text = f"Modo: IA (autônoma) — {self.sim_speed:g}x"
+        self._schedule_ai_clock()
+
+    def on_stop_autonomous(self, _btn):
+        self.autonomous = False
+        if self._ai_event is not None:
+            self._ai_event.cancel()
+            self._ai_event = None
+        self.action_grid.disabled = False
+        self.btn_play_solo.disabled = False
+        self.btn_stop_ai.disabled = True
+        self.mode_label.text = "Modo: MANUAL"
+
+    def on_set_speed(self, speed: float):
+        self.sim_speed = speed
+        self._refresh_speed_buttons()
+        if self.autonomous:
+            self.mode_label.text = f"Modo: IA (autônoma) — {self.sim_speed:g}x"
+            self._schedule_ai_clock()  # reagenda no novo intervalo
+
+    def _refresh_speed_buttons(self):
+        for speed, btn in self._speed_buttons.items():
+            selected = speed == self.sim_speed
+            btn.bold = selected
+            btn.background_color = (0.25, 0.65, 0.95, 1) if selected else (1, 1, 1, 1)
+
+    def _schedule_ai_clock(self):
+        if self._ai_event is not None:
+            self._ai_event.cancel()
+        interval = self.BASE_AI_INTERVAL / self.sim_speed
+        self._ai_event = Clock.schedule_interval(self._ai_step, interval)
+
+    def _ai_step(self, _dt):
+        if not self.autonomous or not self.state:
+            return
+        owner = self.state.owner()
+        if owner is None:
+            self.on_stop_autonomous(None)
+            return
+        action = self.agent.decide(self.state, self.env)
+        if action is None:
+            self.on_stop_autonomous(None)
+            return
+        self._execute(action)
 
 
 if __name__ == "__main__":
