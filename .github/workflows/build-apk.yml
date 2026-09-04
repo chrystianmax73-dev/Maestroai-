@@ -23,7 +23,7 @@ on:
 jobs:
   build-apk:
     runs-on: ubuntu-22.04
-    timeout-minutes: 60
+    timeout-minutes: 90
 
     steps:
       - name: Checkout do repositório
@@ -34,6 +34,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential git zip unzip openjdk-17-jdk autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev cmake libffi-dev libssl-dev
           java -version
+          python3 --version
 
       - name: Rodar testes do núcleo, IA, percepção e empacotamento
         run: |
@@ -44,18 +45,22 @@ jobs:
 
       - name: Instalar Buildozer
         run: |
-          python3 -m pip install --upgrade pip
+          python3 -m pip install --upgrade pip setuptools wheel
           python3 -m pip install --upgrade buildozer cython
           buildozer --version
 
       - name: Build do APK com Buildozer
+        env:
+          P4A_RELEASE_KEYSTORE: ""
         run: |
-          yes | buildozer android debug
+          yes | buildozer -v android debug
 
       - name: Verificar APK gerado
         run: |
           ls -lah bin/
-          test -n "$(find bin -maxdepth 1 -type f -name '*.apk' -print -quit)"
+          APK="$(find bin -maxdepth 1 -type f -name '*.apk' -print -quit)"
+          test -n "$APK"
+          echo "APK_GERADO=$APK"
 
       - name: Publicar APK como artifact
         uses: actions/upload-artifact@v4
