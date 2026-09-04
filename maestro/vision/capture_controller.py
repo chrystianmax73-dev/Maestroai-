@@ -1,8 +1,4 @@
-"""Controle robusto da sessão de captura Android do Maestro.
-
-Somente leitura: MediaProjection captura a tela para percepção/diagnóstico.
-Nenhum toque, teclado ou comando é injetado em aplicativos externos.
-"""
+"""Controle da sessão Android de captura do Maestro Vision."""
 from __future__ import annotations
 
 import json
@@ -23,23 +19,26 @@ class CaptureStatus:
     scene_confidence: float = 0.0
     ball_confidence: float = 0.0
     uncertain: bool = True
+    agent_active: bool = False
+    agent_state: str = "OFF"
 
 
 class CaptureController:
     REQUEST_CODE = 4901
-    REQUEST_ACTION = "org.maestro.CAPTURE_REQUEST"
     RESULT_ACTION = "org.maestro.CAPTURE_RESULT"
     STOP_ACTION = "org.maestro.CAPTURE_STOP"
+    AGENT_START_ACTION = "org.maestro.AGENT_START"
+    AGENT_PAUSE_ACTION = "org.maestro.AGENT_PAUSE"
+    AGENT_STOP_ACTION = "org.maestro.AGENT_STOP"
 
     def __init__(self, status_callback=None):
         self.status_callback = status_callback
         self._android = False
         self._status_path: Optional[Path] = None
         self._activity = None
-        self._bound = False
         try:
-            from android import activity
-            from jnius import autoclass
+            from android import activity  # type: ignore
+            from jnius import autoclass  # type: ignore
             self._android = True
             self._activity_module = activity
             self._autoclass = autoclass
@@ -52,10 +51,8 @@ class CaptureController:
         return self._android
 
     def _get_activity(self):
-        if self._activity is not None:
-            return self._activity
-        PythonActivity = self._autoclass("org.kivy.android.PythonActivity")
-        self._activity = PythonActivity.mActivity
+        if self._activity is None:
+            self._activity = self._autoclass("org.kivy.android.PythonActivity").mActivity
         return self._activity
 
     def _load_status_path(self) -> Path:
@@ -77,6 +74,7 @@ class CaptureController:
             height=int(data.get("height", 0)), last_frame=str(data.get("last_frame", "")),
             error=str(data.get("error", "")), scene_confidence=float(data.get("scene_confidence", 0.0)),
             ball_confidence=float(data.get("ball_confidence", 0.0)), uncertain=bool(data.get("uncertain", True)),
+            agent_active=bool(data.get("agent_active", False)), agent_state=str(data.get("agent_state", "OFF")),
         )
 
     def _notify(self, text: str) -> None:
@@ -90,46 +88,46 @@ class CaptureController:
         activity = self._get_activity()
         Settings = self._autoclass("android.provider.Settings")
         Build = self._autoclass("android.os.Build$VERSION")
-        Intent = self._autoclass("android.content.Intent")
         Uri = self._autoclass("android.net.Uri")
         if int(Build.SDK_INT) >= 23 and not Settings.canDrawOverlays(activity):
-            intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
+            intent = self._autoclass("android.content.Intent")(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
             intent.setData(Uri.parse("package:" + str(activity.getPackageName())))
             activity.startActivity(intent)
             self._notify("Permita sobreposição e toque em ATIVAR CAPTURA novamente")
             return False
-        if not self._bound:
-            self._activity_module.bind(on_activity_result=self._on_activity_result)
-            self._bound = True
         Context = self._autoclass("android.content.Context")
         MPM = self._autoclass("android.media.projection.MediaProjectionManager")
         manager = activity.getSystemService(Context.MEDIA_PROJECTION_SERVICE)
+        if manager is None:
+            self._notify("MediaProjection indisponível neste dispositivo")
+            return False
         activity.startActivityForResult(manager.createScreenCaptureIntent(), self.REQUEST_CODE)
         self._notify("Aguardando autorização de captura de tela…")
         return True
 
-    def _on_activity_result(self, request_code, result_code, data):
-        if request_code != self.REQUEST_CODE:
-            return
-        if int(result_code) <= 0 or data is None:
-            self._notify("Captura cancelada")
+    def _send(self, action: str) -> None:
+        if not self.available:
             return
         try:
-            ServiceClass = self._autoclass("org.maestro.maestrogrid.ServiceCapture")
+            Intent = self._autoclass("android.content.Intent")
             activity = self._get_activity()
-            ServiceClass.start(activity, "capture")
-            self._send_result_broadcast(activity, int(result_code), data)
-            self._notify("Captura iniciada; aguardando primeiro frame…")
+            intent = Intent(action)
+            intent.setPackage(activity.getPackageName())
+            activity.sendBroadcast(intent)
         except Exception as exc:
-            self._notify(f"Falha ao iniciar captura: {exc}")
+            self._notify(f"Falha no comando: {exc}")
 
-    def _send_result_broadcast(self, activity, result_code, data):
-        Intent = self._autoclass("android.content.Intent")
-        intent = Intent(self.RESULT_ACTION)
-        intent.setPackage(activity.getPackageName())
-        intent.putExtra("result_code", result_code)
-        intent.putExtra("data_intent", data)
-        activity.sendBroadcast(intent)
+    def start_agent(self) -> None:
+        self._send(self.AGENT_START_ACTION)
+        self._notify("Modo IA de observação solicitado")
+
+    def pause_agent(self) -> None:
+        self._send(self.AGENT_PAUSE_ACTION)
+        self._notify("IA pausada")
+
+    def stop_agent(self) -> None:
+        self._send(self.AGENT_STOP_ACTION)
+        self._notify("IA parada")
 
     def stop(self) -> None:
         if not self.available:
@@ -137,20 +135,8 @@ class CaptureController:
         try:
             self._autoclass("org.maestro.maestrogrid.ServiceCapture").stop(self._get_activity())
         except Exception:
-            try:
-                Intent = self._autoclass("android.content.Intent")
-                intent = Intent(self.STOP_ACTION)
-                intent.setPackage(self._get_activity().getPackageName())
-                self._get_activity().sendBroadcast(intent)
-            except Exception:
-                pass
+            self._send(self.STOP_ACTION)
         self._notify("Captura parada")
 
     def close(self) -> None:
-        if self._bound and self._activity_module is not None:
-            try:
-                self._activity_module.unbind(on_activity_result=self._on_activity_result)
-            except Exception:
-                pass
-            self._bound = False
         self.stop()
