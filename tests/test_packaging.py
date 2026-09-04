@@ -42,10 +42,11 @@ def test_capture_is_observation_only():
 
 def test_capture_activation_is_explicit():
     java = (ROOT / "android_src/org/maestro/capture/CaptureActivity.java").read_text(encoding="utf-8")
-    app = (ROOT / "app/main_v2.py").read_text(encoding="utf-8")
+    controller = (ROOT / "maestro/vision/capture_controller.py").read_text(encoding="utf-8")
     assert "CAPTURE_RESULT" in java
     assert "MediaProjectionManager" in java
-    assert "org.maestro.CAPTURE_REQUEST" in app
+    assert "startActivityForResult" in controller
+    assert "REQUEST_CODE = 4901" in controller
     assert "requestCaptureIfNeeded();" not in java
 
 
@@ -70,6 +71,7 @@ def test_ui_has_real_lab_controls():
     for label in ("ABRIR LABORATÓRIO", "TESTAR VISÃO E CAPTURA", "INICIAR IA", "PARAR IA", "DIAGNÓSTICO", "NOVO JOGO", "PASSE", "DRIBLE", "LANÇAMENTO", "CRUZAMENTO", "FINALIZAR", "MAESTRO LAB", "FOOTBALL INTELLIGENCE LAB"):
         assert label in app, f"controle ausente: {label}"
     assert "ScreenManager" in app and "_poll" in app and "open_diagnostics" in app
+    assert "toggle_capture" in app and "toggle_ai" in app
 
 
 def test_workflow_file_exists_and_has_expected_steps():
