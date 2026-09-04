@@ -7,9 +7,10 @@ source.include_exts = py,png,jpg,kv,atlas,json,txt
 source.include_patterns = maestro/**,app/**,services/**
 version = 0.2.0
 
-# Dependências Python empacotadas no APK
-# Explicit hostpython evita o conflito detectado no p4a master.
-requirements = python3==3.11,hostpython3==3.11,kivy
+# Dependências Python empacotadas no APK.
+# A release v2024.01.21 do python-for-android usa Python 3.11
+# de forma consistente para hostpython3 e python3.
+requirements = python3,kivy
 
 # Serviço de captura: MediaProjection + foreground service.
 services = capture:services/capture.py:foreground:sticky:foregroundServiceType=mediaProjection
@@ -26,7 +27,7 @@ android.activity_class_name = org.maestro.capture.CaptureActivity
 android.allow_backup = False
 android.presplash_color = #2E7D32
 android.accept_sdk_license = True
-p4a.branch = master
+p4a.branch = v2024.01.21
 
 [buildozer]
 log_level = 2
