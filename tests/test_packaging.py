@@ -62,7 +62,8 @@ def test_workflow_file_exists_and_has_expected_steps():
     workflow_path = ROOT / ".github" / "workflows" / "build-apk.yml"
     assert workflow_path.exists(), "workflow de build do APK não encontrado"
     content = workflow_path.read_text(encoding="utf-8")
-    assert "buildozer android debug" in content
+    # Aceita o comando com a flag de verbosidade usada pelo workflow atual.
+    assert "buildozer" in content and "android debug" in content
     assert "upload-artifact" in content
     assert "workflow_dispatch" in content
     print("TESTE PACKAGING 4 OK — workflow do GitHub Actions presente")
