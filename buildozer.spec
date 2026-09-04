@@ -8,7 +8,8 @@ source.include_patterns = maestro/**,app/**,services/**
 version = 0.2.0
 
 # Dependências Python empacotadas no APK
-requirements = python3==3.11,kivy
+# Explicit hostpython evita o conflito detectado no p4a master.
+requirements = python3==3.11,hostpython3==3.11,kivy
 
 # Serviço de captura: MediaProjection + foreground service.
 services = capture:services/capture.py:foreground:sticky:foregroundServiceType=mediaProjection
