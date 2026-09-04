@@ -26,6 +26,7 @@ from kivy.uix.scrollview import ScrollView
 from kivy.uix.widget import Widget
 
 from maestro import Action, ActionType, HeuristicAgent, MaestroGridEnv
+from maestro.vision.capture_controller import CaptureController
 
 
 # ---------------------------------------------------------------------------
@@ -397,6 +398,9 @@ class MaestroMobileApp(App):
         self.ai_event = None
         self.pending_type: Optional[ActionType] = None
         self.capture_status = {}
+        self.capture = CaptureController(
+            status_callback=lambda t: self.set_status("CAPTURA", t)
+        )
 
         self.sm = ScreenManager(transition=NoTransition())
         self.home = HomeScreen(self, name="home")
@@ -534,23 +538,23 @@ class MaestroMobileApp(App):
     # ------------------------------------------------------------------
     # Capture / vision control. Read-only observation; no input injection.
     # ------------------------------------------------------------------
-    def _capture_broadcast(self, action):
-        try:
-            from jnius import autoclass
-            PythonActivity = autoclass("org.kivy.android.PythonActivity")
-            Intent = autoclass("android.content.Intent")
-            intent = Intent(action)
-            intent.setPackage(PythonActivity.mActivity.getPackageName())
-            PythonActivity.mActivity.sendBroadcast(intent)
-            return True
-        except Exception as exc:
-            self.set_status("CAPTURA", f"Não foi possível enviar o comando: {exc}")
-            return False
-
     def toggle_capture(self):
-        active = bool(self.capture_status.get("active"))
-        self._capture_broadcast("org.maestro.CAPTURE_STOP" if active else "org.maestro.CAPTURE_REQUEST")
-        self.set_status("CAPTURA", "Solicitação enviada; aguardando status do Android.")
+        try:
+            active = bool(self.capture_status.get("active"))
+            if active:
+                self.capture.stop()
+            else:
+                self.capture.request_capture()
+        except Exception as exc:
+            self.set_status("CAPTURA", f"Erro: {exc}")
+
+    def on_stop(self):
+        try:
+            if hasattr(self, "capture"):
+                self.capture.close()
+        except Exception:
+            pass
+        super().on_stop()
 
     def poll_capture(self, _dt):
         try:
