@@ -2,9 +2,7 @@ name: Build Android APK
 
 on:
   push:
-    branches:
-      - main
-      - "feat/**"
+    branches: [main, "feat/**"]
     paths:
       - "maestro/**"
       - "app/**"
@@ -16,53 +14,69 @@ on:
       - "tests/**"
       - ".github/workflows/build-apk.yml"
   pull_request:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
 
 jobs:
   build-apk:
     runs-on: ubuntu-22.04
-    timeout-minutes: 90
+    timeout-minutes: 120
 
     steps:
-      - name: Checkout do repositório
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Preparar ambiente Android
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: System deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential git zip unzip openjdk-17-jdk autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev cmake libffi-dev libssl-dev
+          sudo apt-get install -y \
+            build-essential git zip unzip autoconf libtool pkg-config \
+            zlib1g-dev libncurses5-dev libncursesw5-dev cmake \
+            libffi-dev libssl-dev libltdl-dev
           java -version
-          python3 --version
+          python --version
 
-      - name: Rodar testes do núcleo, IA, percepção e empacotamento
+      - name: Run tests
         run: |
-          python3 tests/test_env_integration.py
-          python3 tests/test_heuristic_agent.py
-          python3 tests/test_screen_perception.py
-          python3 tests/test_packaging.py
+          python tests/test_env_integration.py
+          python tests/test_heuristic_agent.py
+          python tests/test_screen_perception.py
+          python tests/test_packaging.py
 
-      - name: Instalar Buildozer
+      - name: Install Buildozer
         run: |
-          python3 -m pip install --upgrade pip setuptools wheel
-          python3 -m pip install --upgrade buildozer cython
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install "cython<3" buildozer
           buildozer --version
 
-      - name: Build do APK com Buildozer
+      - name: Build APK
         env:
-          P4A_RELEASE_KEYSTORE: ""
+          JAVA_HOME: ${{ env.JAVA_HOME }}
         run: |
-          yes | buildozer -v android debug
+          # evita prompt interativo
+          yes | buildozer -v android debug || true
+          # se ainda falhar, falha de verdade abaixo
+          test -n "$(find bin -maxdepth 1 -type f -name '*.apk' 2>/dev/null | head -1)"
 
-      - name: Verificar APK gerado
+      - name: Verify APK
         run: |
           ls -lah bin/
           APK="$(find bin -maxdepth 1 -type f -name '*.apk' -print -quit)"
           test -n "$APK"
           echo "APK_GERADO=$APK"
 
-      - name: Publicar APK como artifact
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: maestro-grid-debug-apk
