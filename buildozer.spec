@@ -22,7 +22,7 @@ android.ndk = 25b
 android.archs = arm64-v8a, armeabi-v7a
 android.add_src = %(source.dir)s/android_src
 android.activity_class_name = org.maestro.capture.CaptureActivity
-android.allow_backup = True
+android.allow_backup = False
 android.presplash_color = #2E7D32
 android.accept_sdk_license = True
 
