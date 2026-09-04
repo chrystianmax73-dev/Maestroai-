@@ -1,4 +1,9 @@
-"""Controle da sessão Android de captura do Maestro Vision."""
+"""Controle da sessão Android de captura do Maestro Vision.
+
+O controlador roda no processo principal. Ele nunca inicia MediaProjection no
+startup: somente após ação explícita do usuário e RESULT_OK do Android o
+serviço p4a Capture é iniciado e recebe o token por broadcast local.
+"""
 from __future__ import annotations
 
 import json
@@ -25,6 +30,7 @@ class CaptureStatus:
 
 class CaptureController:
     REQUEST_CODE = 4901
+    REQUEST_ACTION = "org.maestro.CAPTURE_REQUEST"
     RESULT_ACTION = "org.maestro.CAPTURE_RESULT"
     STOP_ACTION = "org.maestro.CAPTURE_STOP"
     AGENT_START_ACTION = "org.maestro.AGENT_START"
@@ -36,15 +42,18 @@ class CaptureController:
         self._android = False
         self._status_path: Optional[Path] = None
         self._activity = None
+        self._activity_module = None
+        self._autoclass = None
+        self._activity_bound = False
         try:
             from android import activity  # type: ignore
             from jnius import autoclass  # type: ignore
             self._android = True
             self._activity_module = activity
             self._autoclass = autoclass
-        except ImportError:
-            self._activity_module = None
-            self._autoclass = None
+            self._bind_activity_result()
+        except (ImportError, RuntimeError):
+            pass
 
     @property
     def available(self) -> bool:
@@ -54,6 +63,15 @@ class CaptureController:
         if self._activity is None:
             self._activity = self._autoclass("org.kivy.android.PythonActivity").mActivity
         return self._activity
+
+    def _bind_activity_result(self) -> None:
+        if not self.available or self._activity_bound:
+            return
+        try:
+            self._activity_module.bind(on_activity_result=self._on_activity_result)
+            self._activity_bound = True
+        except Exception as exc:
+            self._notify(f"Bridge MediaProjection indisponível: {exc}")
 
     def _load_status_path(self) -> Path:
         if self._status_path is None:
@@ -69,41 +87,85 @@ class CaptureController:
         except (FileNotFoundError, OSError, ValueError):
             return CaptureStatus()
         return CaptureStatus(
-            active=bool(data.get("active", False)), frames=int(data.get("frames", 0)),
-            fps=float(data.get("fps", 0.0)), width=int(data.get("width", 0)),
-            height=int(data.get("height", 0)), last_frame=str(data.get("last_frame", "")),
-            error=str(data.get("error", "")), scene_confidence=float(data.get("scene_confidence", 0.0)),
-            ball_confidence=float(data.get("ball_confidence", 0.0)), uncertain=bool(data.get("uncertain", True)),
-            agent_active=bool(data.get("agent_active", False)), agent_state=str(data.get("agent_state", "OFF")),
+            active=bool(data.get("active", False)),
+            frames=int(data.get("frames", 0)),
+            fps=float(data.get("fps", 0.0)),
+            width=int(data.get("width", 0)),
+            height=int(data.get("height", 0)),
+            last_frame=str(data.get("last_frame", "")),
+            error=str(data.get("error", "")),
+            scene_confidence=float(data.get("scene_confidence", 0.0)),
+            ball_confidence=float(data.get("ball_confidence", 0.0)),
+            uncertain=bool(data.get("uncertain", True)),
+            agent_active=bool(data.get("agent_active", False)),
+            agent_state=str(data.get("agent_state", "OFF")),
         )
 
     def _notify(self, text: str) -> None:
         if self.status_callback:
-            self.status_callback(text)
+            try:
+                self.status_callback(text)
+            except Exception:
+                pass
 
     def request_capture(self) -> bool:
         if not self.available:
             self._notify("Captura Android indisponível")
             return False
+        try:
+            activity = self._get_activity()
+            Settings = self._autoclass("android.provider.Settings")
+            Build = self._autoclass("android.os.Build$VERSION")
+            Uri = self._autoclass("android.net.Uri")
+            if int(Build.SDK_INT) >= 23 and not Settings.canDrawOverlays(activity):
+                intent = self._autoclass("android.content.Intent")(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
+                intent.setData(Uri.parse("package:" + str(activity.getPackageName())))
+                activity.startActivity(intent)
+                self._notify("Permita sobreposição e toque em ATIVAR CAPTURA novamente")
+                return False
+
+            Context = self._autoclass("android.content.Context")
+            MPM = self._autoclass("android.media.projection.MediaProjectionManager")
+            manager = activity.getSystemService(Context.MEDIA_PROJECTION_SERVICE)
+            if manager is None:
+                self._notify("MediaProjection indisponível neste dispositivo")
+                return False
+            activity.startActivityForResult(manager.createScreenCaptureIntent(), self.REQUEST_CODE)
+            self._notify("Aguardando autorização de captura de tela…")
+            return True
+        except Exception as exc:
+            self._notify(f"Falha ao solicitar captura: {exc}")
+            return False
+
+    def _on_activity_result(self, request_code, result_code, data_intent) -> None:
+        if int(request_code) != self.REQUEST_CODE:
+            return
+        try:
+            result_ok = int(result_code) == -1  # Activity.RESULT_OK
+            if not result_ok or data_intent is None:
+                self._notify("Captura cancelada pelo usuário")
+                return
+            self._start_service()
+            # O serviço é um processo separado; o token é entregue por broadcast
+            # depois que o processo do serviço já está iniciado.
+            self._send_result(result_code, data_intent)
+            self._notify("Autorização recebida; iniciando captura…")
+        except Exception as exc:
+            self._notify(f"Falha ao iniciar captura autorizada: {exc}")
+
+    def _start_service(self) -> None:
         activity = self._get_activity()
-        Settings = self._autoclass("android.provider.Settings")
-        Build = self._autoclass("android.os.Build$VERSION")
-        Uri = self._autoclass("android.net.Uri")
-        if int(Build.SDK_INT) >= 23 and not Settings.canDrawOverlays(activity):
-            intent = self._autoclass("android.content.Intent")(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
-            intent.setData(Uri.parse("package:" + str(activity.getPackageName())))
-            activity.startActivity(intent)
-            self._notify("Permita sobreposição e toque em ATIVAR CAPTURA novamente")
-            return False
-        Context = self._autoclass("android.content.Context")
-        MPM = self._autoclass("android.media.projection.MediaProjectionManager")
-        manager = activity.getSystemService(Context.MEDIA_PROJECTION_SERVICE)
-        if manager is None:
-            self._notify("MediaProjection indisponível neste dispositivo")
-            return False
-        activity.startActivityForResult(manager.createScreenCaptureIntent(), self.REQUEST_CODE)
-        self._notify("Aguardando autorização de captura de tela…")
-        return True
+        ServiceCapture = self._autoclass("org.maestro.maestrogrid.ServiceCapture")
+        ServiceCapture.start(activity, "capture")
+
+    def _send_result(self, result_code, data_intent) -> None:
+        Intent = self._autoclass("android.content.Intent")
+        activity = self._get_activity()
+        intent = Intent(self.RESULT_ACTION)
+        intent.setPackage(activity.getPackageName())
+        intent.putExtra("result_code", int(result_code))
+        intent.putExtra("data_intent", data_intent)
+        activity.sendBroadcast(intent)
 
     def _send(self, action: str) -> None:
         if not self.available:
@@ -132,10 +194,14 @@ class CaptureController:
     def stop(self) -> None:
         if not self.available:
             return
-        # A parada é feita pelo receiver do próprio serviço. Isso evita depender
-        # de uma API estática que o p4a não garante no PythonService gerado.
         self._send(self.STOP_ACTION)
         self._notify("Captura parada")
 
     def close(self) -> None:
+        if self._activity_module is not None and self._activity_bound:
+            try:
+                self._activity_module.unbind(on_activity_result=self._on_activity_result)
+            except Exception:
+                pass
+            self._activity_bound = False
         self.stop()
