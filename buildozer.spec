@@ -1,7 +1,5 @@
 [app]
 title = Maestro
-title = Maestro
-title = Maestro
 package.name = maestrogrid
 package.domain = org.maestro
 source.dir = .
