@@ -1,11 +1,13 @@
 [app]
-title = Maestro Grid
+title = Maestro
+title = Maestro
+title = Maestro
 package.name = maestrogrid
 package.domain = org.maestro
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas,json,txt
 source.include_patterns = maestro/**,app/**,services/**
-version = 0.2.0
+version = 0.3.0
 
 # Dependências Python empacotadas no APK.
 # A release v2024.01.21 do python-for-android usa Python 3.11
