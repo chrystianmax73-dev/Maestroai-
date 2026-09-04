@@ -1,7 +1,7 @@
 """Foreground MediaProjection capture service for Maestro.
 
-The service captures frames into the app-private sandbox and exposes only
-local diagnostic telemetry. It does not synthesize or inject input events.
+The service captures frames into the app-private sandbox and exposes local
+diagnostic telemetry. It does not synthesize or inject input events.
 """
 
 from __future__ import annotations
@@ -40,6 +40,8 @@ class CaptureService:
         self.listener = None
         self.receiver = None
         self.projection_callback = None
+        self.overlay = None
+        self.overlay_params = None
         self.running = False
         self.frame_count = 0
         self.window_start = time.monotonic()
@@ -163,6 +165,77 @@ class CaptureService:
             self._write_status(error=f"Falha ao criar captura: {exc}")
             self.stop()
 
+    def _ensure_overlay(self):
+        if self.overlay is not None:
+            return
+        try:
+            Context = autoclass("android.content.Context")
+            TextView = autoclass("android.widget.TextView")
+            WindowManagerParams = autoclass("android.view.WindowManager$LayoutParams")
+            PixelFormat = autoclass("android.graphics.PixelFormat")
+            Gravity = autoclass("android.view.Gravity")
+            Build = autoclass("android.os.Build$VERSION")
+
+            view = TextView(self.context)
+            view.setText("MAESTRO VISION\\nCAPTURA: ATIVA\\nAguardando frames…")
+            view.setTextSize(12.0)
+            view.setTextColor(0xFFFFFFFF)
+            view.setBackgroundColor(0xB8000000)
+            view.setPadding(18, 12, 18, 12)
+
+            flags = (
+                WindowManagerParams.FLAG_NOT_FOCUSABLE
+                | WindowManagerParams.FLAG_NOT_TOUCHABLE
+                | WindowManagerParams.FLAG_LAYOUT_NO_LIMITS
+            )
+            params = WindowManagerParams(
+                WindowManagerParams.WRAP_CONTENT,
+                WindowManagerParams.WRAP_CONTENT,
+                WindowManagerParams.TYPE_APPLICATION_OVERLAY,
+                flags,
+                PixelFormat.TRANSLUCENT,
+            )
+            params.gravity = Gravity.TOP | Gravity.START
+            params.x = 12
+            params.y = 42
+            window_manager = self.context.getSystemService(Context.WINDOW_SERVICE)
+            window_manager.addView(view, params)
+            self.overlay = view
+            self.overlay_params = params
+        except Exception as exc:
+            self._write_status(error=f"Overlay: {exc}")
+
+    def _update_overlay(self):
+        if not self.running:
+            return
+        self._ensure_overlay()
+        if self.overlay is None:
+            return
+        try:
+            text = (
+                "MAESTRO VISION\\n"
+                f"CAPTURA: ATIVA\\n"
+                f"FPS: {self.fps:.1f}\\n"
+                f"TELA: {self.width}x{self.height}\\n"
+                f"AMOSTRA: {'OK' if self.last_frame_path else 'aguardando'}\\n"
+                "ANÁLISE: somente leitura"
+            )
+            self.overlay.setText(text)
+        except Exception:
+            pass
+
+    def _remove_overlay(self):
+        if self.overlay is None:
+            return
+        try:
+            Context = autoclass("android.content.Context")
+            wm = self.context.getSystemService(Context.WINDOW_SERVICE)
+            wm.removeView(self.overlay)
+        except Exception:
+            pass
+        self.overlay = None
+        self.overlay_params = None
+
     def handle_image(self, reader):
         if not self.running:
             return
@@ -179,6 +252,7 @@ class CaptureService:
                 self.frame_count = 0
                 self.window_start = now
                 self._save_sample(image)
+                self._update_overlay()
                 self._write_status()
         except Exception as exc:
             self._write_status(error=f"Frame: {exc}")
@@ -235,6 +309,7 @@ class CaptureService:
 
     def stop(self):
         self.running = False
+        self._remove_overlay()
         for obj, method in [
             (self.virtual_display, "release"),
             (self.reader, "close"),
