@@ -3,17 +3,18 @@ title = Maestro
 package.name = maestrogrid
 package.domain = org.maestro
 source.dir = .
-source.include_exts = py,png,jpg,kv,atlas,json,txt
-source.include_patterns = maestro/**,app/**,services/**
-version = 0.3.0
+source.include_exts = py,png,jpg,kv,atlas,json,txt,java
+source.include_patterns = maestro/**,app/**,services/**,android_src/**
+version = 0.3.1
 
 # Dependências Python empacotadas no APK.
 # A release v2024.01.21 do python-for-android usa Python 3.11
 # de forma consistente para hostpython3 e python3.
 requirements = python3,kivy
 
-# Serviço de captura: MediaProjection + foreground service.
-services = capture:services/capture.py:foreground:sticky:foregroundServiceType=mediaProjection
+# Serviço de captura: somente foreground. A autorização MediaProjection
+# ocorre sob ação explícita do usuário antes do serviço iniciar a sessão.
+services = capture:services/capture.py:foreground
 
 orientation = portrait
 fullscreen = 0
@@ -23,7 +24,6 @@ android.minapi = 24
 android.ndk = 25b
 android.archs = arm64-v8a
 android.add_src = %(source.dir)s/android_src
-android.activity_class_name = org.maestro.capture.CaptureActivity
 android.allow_backup = False
 android.presplash_color = #2E7D32
 android.accept_sdk_license = True
