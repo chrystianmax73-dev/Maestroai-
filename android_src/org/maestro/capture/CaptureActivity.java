@@ -1,7 +1,10 @@
 package org.maestro.capture;
 
 import android.app.Activity;
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.media.projection.MediaProjectionManager;
 import android.net.Uri;
 import android.os.Bundle;
@@ -13,18 +16,34 @@ import org.kivy.android.PythonActivity;
 import org.maestro.maestrogrid.ServiceCapture;
 
 /**
- * Kivy Activity wrapper that performs the Android consent flow for screen
- * capture. The actual frames are handled by the Python foreground service.
+ * Android consent/controller bridge for Maestro Vision.
+ *
+ * The Python UI asks for capture by broadcasting CAPTURE_REQUEST. This class
+ * then performs the official Android consent flow and starts the existing
+ * foreground capture service. No input injection is performed.
  */
 public class CaptureActivity extends PythonActivity {
     private static final int REQUEST_CAPTURE = 4901;
+    private static final String REQUEST_ACTION = "org.maestro.CAPTURE_REQUEST";
+    private static final String RESULT_ACTION = "org.maestro.CAPTURE_RESULT";
+
     private boolean waitingForOverlay = false;
     private boolean captureRequested = false;
+    private BroadcastReceiver requestReceiver;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        new Handler(Looper.getMainLooper()).postDelayed(this::requestCaptureIfNeeded, 1200);
+        requestReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                if (REQUEST_ACTION.equals(intent.getAction())) {
+                    requestCaptureIfNeeded();
+                }
+            }
+        };
+        IntentFilter filter = new IntentFilter(REQUEST_ACTION);
+        registerReceiver(requestReceiver, filter);
     }
 
     @Override
@@ -71,7 +90,7 @@ public class CaptureActivity extends PythonActivity {
         try {
             ServiceCapture.start(this, "capture");
             new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                Intent intent = new Intent("org.maestro.CAPTURE_RESULT");
+                Intent intent = new Intent(RESULT_ACTION);
                 intent.setPackage(getPackageName());
                 intent.putExtra("result_code", resultCode);
                 intent.putExtra("data_intent", data);
@@ -80,5 +99,17 @@ public class CaptureActivity extends PythonActivity {
         } catch (Throwable error) {
             captureRequested = false;
         }
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (requestReceiver != null) {
+            try {
+                unregisterReceiver(requestReceiver);
+            } catch (Exception ignored) {
+            }
+            requestReceiver = null;
+        }
+        super.onDestroy();
     }
 }
