@@ -1,47 +1,27 @@
-"""
-Maestro Mobile — v0.2 (Kivy)
-======================================
-Interface mobile que consome MaestroGridEnv (e, na v0.2, também o
-HeuristicAgent) sem alterar a lógica de nenhum dos dois.
-
-Arquitetura preparada para cursor futuro:
-- `controlled_player_id` existe no estado da UI e é independente de
-  `ball.owner_id`. Na v1, ações são sempre executadas pelo dono da bola
-  (exigência atual do ambiente). No futuro, o cursor poderá selecionar
-  qualquer jogador do time controlado sem quebrar a interface.
-
-Modo autônomo (v0.2):
-- "JOGAR SOZINHO" liga um `Clock.schedule_interval` que, a cada tick,
-  pede uma ação ao `HeuristicAgent` e a executa via `_execute()` — o
-  MESMO caminho usado pelas ações manuais, então tudo que já valida e
-  atualiza a UI continua valendo sem duplicação de lógica.
-- Enquanto a IA está ativa, os botões de ação manual ficam desabilitados
-  para não haver dois "atores" decidindo ao mesmo tempo. Ao parar a IA,
-  o controle manual volta imediatamente.
-- 100% offline: o agente não faz nenhuma chamada de rede, não depende
-  de serviço externo, e só usa a API pública já existente do ambiente.
-"""
-
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
+from typing import Optional
 
-# Garante que o pacote maestro seja encontrado tanto no desktop quanto no APK
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from kivy.app import App
 from kivy.clock import Clock
-from kivy.graphics import Color, Ellipse, Line, Rectangle
+from kivy.core.window import Window
+from kivy.graphics import Color, Ellipse, Line, Rectangle, RoundedRectangle
 from kivy.metrics import dp
-from kivy.properties import NumericProperty, ObjectProperty, StringProperty
+from kivy.properties import BooleanProperty, NumericProperty, ObjectProperty, StringProperty
+from kivy.uix.behaviors import ButtonBehavior
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
+from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.gridlayout import GridLayout
 from kivy.uix.label import Label
-from kivy.uix.popup import Popup
+from kivy.uix.screenmanager import Screen, ScreenManager, NoTransition
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.widget import Widget
 
@@ -49,567 +29,576 @@ from maestro import Action, ActionType, HeuristicAgent, MaestroGridEnv
 
 
 # ---------------------------------------------------------------------------
-# Constantes de UI
+# Visual system — designed for Maestro, not default Kivy controls.
 # ---------------------------------------------------------------------------
-TEAM_A_COLOR = (0.12, 0.45, 0.85, 1.0)   # azul
-TEAM_B_COLOR = (0.85, 0.20, 0.20, 1.0)   # vermelho
-BALL_COLOR = (1.0, 0.92, 0.15, 1.0)      # amarelo
-FIELD_COLOR = (0.18, 0.55, 0.28, 1.0)    # verde
-ZONE_COLOR = (0.15, 0.40, 0.20, 0.45)
-GRID_LINE = (1, 1, 1, 0.25)
-CURSOR_RING = (1.0, 1.0, 0.3, 0.9)       # reservado para cursor futuro
+BG = (0.035, 0.047, 0.060, 1)
+PANEL = (0.065, 0.080, 0.098, 1)
+PANEL_2 = (0.085, 0.102, 0.125, 1)
+TEXT = (0.93, 0.96, 0.98, 1)
+MUTED = (0.54, 0.60, 0.66, 1)
+ACCENT = (0.18, 0.82, 0.56, 1)
+ACCENT_2 = (0.18, 0.55, 0.95, 1)
+DANGER = (0.92, 0.30, 0.30, 1)
+WARN = (0.96, 0.72, 0.22, 1)
+TEAM_A = (0.18, 0.55, 0.95, 1)
+TEAM_B = (0.92, 0.28, 0.30, 1)
+BALL = (1.0, 0.84, 0.18, 1)
+FIELD = (0.055, 0.30, 0.19, 1)
+FIELD_LINE = (0.75, 0.92, 0.82, 0.35)
 
 
-class FieldWidget(Widget):
-    """Desenha a grade, jogadores, bola e (futuro) anel de cursor."""
-
-    state = ObjectProperty(None, allownone=True)
-    controlled_player_id = NumericProperty(-1)  # prepara cursor futuro
+class Panel(Widget):
+    radius = NumericProperty(14)
+    fill = ObjectProperty(PANEL)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.bind(
-            size=self._redraw,
-            pos=self._redraw,
-            state=self._redraw,
-            controlled_player_id=self._redraw,
-        )
+        self.bind(pos=self._draw, size=self._draw, fill=self._draw)
+        self._draw()
+
+    def _draw(self, *args):
+        self.canvas.before.clear()
+        with self.canvas.before:
+            Color(*self.fill)
+            RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(self.radius)])
+
+
+class MaestroButton(ButtonBehavior, Label):
+    """Flat, high-contrast control used throughout the app."""
+    active = BooleanProperty(False)
+    fill = ObjectProperty(PANEL_2)
+    active_fill = ObjectProperty(ACCENT)
+
+    def __init__(self, **kwargs):
+        self.font_size = kwargs.pop("font_size", dp(13))
+        self.bold = kwargs.pop("bold", True)
+        super().__init__(**kwargs)
+        self.halign = "center"
+        self.valign = "middle"
+        self.bind(size=self._text_size, active=self._draw, pos=self._draw)
+        self._draw()
+
+    def _text_size(self, *args):
+        self.text_size = self.size
+
+    def _draw(self, *args):
+        self.canvas.before.clear()
+        with self.canvas.before:
+            Color(*(self.active_fill if self.active else self.fill))
+            RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(10)])
+
+
+class StatusDot(Widget):
+    active = BooleanProperty(False)
+    color = ObjectProperty(MUTED)
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.bind(pos=self._draw, size=self._draw, active=self._draw)
+        self._draw()
+
+    def _draw(self, *args):
+        self.canvas.clear()
+        with self.canvas:
+            Color(*(ACCENT if self.active else self.color))
+            Ellipse(pos=self.pos, size=self.size)
+
+
+class FieldWidget(Widget):
+    state = ObjectProperty(None, allownone=True)
+    controlled_player_id = NumericProperty(-1)
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.bind(size=self._redraw, pos=self._redraw, state=self._redraw,
+                  controlled_player_id=self._redraw)
 
     def _cell_size(self):
         if not self.state:
             return 1.0, 1.0
-        cols = self.state.grid_cols
-        rows = self.state.grid_rows
-        return self.width / cols, self.height / rows
+        return self.width / self.state.grid_cols, self.height / self.state.grid_rows
 
-    def _cell_center(self, col: int, row: int):
+    def _cell_center(self, col, row):
         cw, ch = self._cell_size()
-        # row 0 no topo (como no overlay ASCII)
-        x = self.x + (col + 0.5) * cw
-        y = self.y + self.height - (row + 0.5) * ch
-        return x, y
+        return self.x + (col + .5) * cw, self.y + self.height - (row + .5) * ch
 
     def _redraw(self, *args):
         self.canvas.clear()
         if not self.state:
             return
-
-        cols = self.state.grid_cols
-        rows = self.state.grid_rows
+        cols, rows = self.state.grid_cols, self.state.grid_rows
         cw, ch = self._cell_size()
-
         with self.canvas:
-            # Campo
-            Color(*FIELD_COLOR)
-            Rectangle(pos=self.pos, size=self.size)
-
-            # Zonas de finalização
-            factor = 10 / 12
-            Color(*ZONE_COLOR)
-            zone_w = (1 - factor) * self.width
-            Rectangle(pos=(self.x, self.y), size=(zone_w, self.height))  # zona B
-            Rectangle(
-                pos=(self.x + factor * self.width, self.y),
-                size=(self.width * (1 - factor), self.height),
-            )  # zona A
-
-            # Linhas da grade
-            Color(*GRID_LINE)
-            for c in range(cols + 1):
+            Color(*FIELD)
+            RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(12)])
+            Color(*FIELD_LINE)
+            # outer lines and midfield
+            Line(rectangle=(self.x, self.y, self.width, self.height), width=1.2)
+            mx = self.x + self.width / 2
+            Line(points=[mx, self.y, mx, self.y + self.height], width=1)
+            Ellipse(pos=(mx - min(self.width, self.height) * .12,
+                         self.y + self.height / 2 - min(self.width, self.height) * .12),
+                    size=(min(self.width, self.height) * .24, min(self.width, self.height) * .24),
+                    angle_start=0, angle_end=360)
+            # grid kept subtle because the simulator is grid-based
+            Color(1, 1, 1, .08)
+            for c in range(1, cols):
                 x = self.x + c * cw
-                Line(points=[x, self.y, x, self.y + self.height], width=1)
-            for r in range(rows + 1):
+                Line(points=[x, self.y, x, self.y + self.height], width=.6)
+            for r in range(1, rows):
                 y = self.y + r * ch
-                Line(points=[self.x, y, self.x + self.width, y], width=1)
+                Line(points=[self.x, y, self.x + self.width, y], width=.6)
 
-            # Jogadores
-            radius = min(cw, ch) * 0.32
+            radius = min(cw, ch) * .31
             for p in self.state.team_a:
-                self._draw_player(p, TEAM_A_COLOR, radius)
+                self._player(p, TEAM_A, radius)
             for p in self.state.team_b:
-                self._draw_player(p, TEAM_B_COLOR, radius)
-
-            # Bola
+                self._player(p, TEAM_B, radius)
             bc, br = self.state.ball.cell
             bx, by = self._cell_center(bc, br)
-            Color(*BALL_COLOR)
-            bradius = radius * 0.45
-            Ellipse(
-                pos=(bx - bradius, by - bradius),
-                size=(bradius * 2, bradius * 2),
-            )
+            Color(*BALL)
+            Ellipse(pos=(bx - radius*.42, by - radius*.42), size=(radius*.84, radius*.84))
 
-            # Anel de cursor (reservado — só desenha se controlled != owner)
             if self.controlled_player_id >= 0:
                 try:
                     cp = self.state.player_by_id(int(self.controlled_player_id))
                     cx, cy = self._cell_center(*cp.cell)
-                    Color(*CURSOR_RING)
-                    Line(
-                        circle=(cx, cy, radius * 1.35),
-                        width=dp(2),
-                    )
+                    Color(*BALL)
+                    Line(circle=(cx, cy, radius * 1.35), width=dp(2))
                 except KeyError:
                     pass
 
-    def _draw_player(self, player, color, radius):
+    def _player(self, player, color, radius):
         x, y = self._cell_center(*player.cell)
         Color(*color)
-        Ellipse(pos=(x - radius, y - radius), size=(radius * 2, radius * 2))
-        # número
-        # (texto é desenhado via Label overlay no layout principal)
+        Ellipse(pos=(x-radius, y-radius), size=(radius*2, radius*2))
+        Color(1, 1, 1, .85)
+        Line(circle=(x, y, radius), width=.8)
 
 
-class PlayerLabelOverlay(Widget):
-    """Labels de número dos jogadores posicionados sobre o FieldWidget."""
-
+class PlayerLabels(Widget):
     state = ObjectProperty(None, allownone=True)
 
-    def __init__(self, field: FieldWidget, **kwargs):
+    def __init__(self, field, **kwargs):
         super().__init__(**kwargs)
         self.field = field
-        self._labels: dict[int, Label] = {}
-        self.bind(size=self._reposition, pos=self._reposition)
-        field.bind(state=self._on_state)
+        self.labels = {}
+        field.bind(state=self._rebuild)
+        self.bind(size=self._place, pos=self._place)
 
-    def _on_state(self, *args):
-        self._rebuild_labels()
-        self._reposition()
-
-    def _rebuild_labels(self):
-        for lab in self._labels.values():
-            self.remove_widget(lab)
-        self._labels.clear()
+    def _rebuild(self, *args):
+        for label in self.labels.values():
+            self.remove_widget(label)
+        self.labels.clear()
         if not self.field.state:
             return
         for p in self.field.state.all_players():
-            lab = Label(
-                text=str(p.id),
-                font_size=dp(12),
-                bold=True,
-                color=(1, 1, 1, 1),
-                size_hint=(None, None),
-                size=(dp(24), dp(24)),
-            )
-            self._labels[p.id] = lab
+            lab = Label(text=str(p.id), color=(1,1,1,1), bold=True,
+                        font_size=dp(9), size_hint=(None,None), size=(dp(22),dp(22)))
+            self.labels[p.id] = lab
             self.add_widget(lab)
+        self._place()
 
-    def _reposition(self, *args):
+    def _place(self, *args):
         if not self.field.state:
             return
-        for pid, lab in self._labels.items():
+        for pid, lab in self.labels.items():
             try:
                 p = self.field.state.player_by_id(pid)
-                x, y = self.field._cell_center(*p.cell)
-                lab.center = (x, y)
+                lab.center = self.field._cell_center(*p.cell)
             except KeyError:
                 pass
 
 
-class MaestroMobileApp(App):
-    title = "Maestro Grid"
+class CaptureCard(Panel):
+    def __init__(self, app, **kwargs):
+        super().__init__(**kwargs)
+        self.app = app
+        box = BoxLayout(orientation="vertical", padding=dp(14), spacing=dp(6))
+        title = Label(text="MAESTRO VISION", color=TEXT, bold=True, font_size=dp(15),
+                      halign="left", valign="middle", size_hint_y=None, height=dp(26))
+        box.add_widget(title)
+        self.state_label = Label(text="CAPTURA DESLIGADA", color=MUTED, font_size=dp(12),
+                                 halign="left", valign="middle", size_hint_y=None, height=dp(24))
+        box.add_widget(self.state_label)
+        row = BoxLayout(spacing=dp(6), size_hint_y=None, height=dp(38))
+        self.toggle = MaestroButton(text="ATIVAR CAPTURA", font_size=dp(11))
+        self.toggle.bind(on_release=lambda *_: app.toggle_capture())
+        row.add_widget(self.toggle)
+        diag = MaestroButton(text="DIAGNÓSTICO", font_size=dp(11))
+        diag.bind(on_release=lambda *_: app.open_diagnostics())
+        row.add_widget(diag)
+        box.add_widget(row)
+        self.add_widget(box)
 
-    # Intervalo base (segundos) entre decisões da IA em velocidade 1x
-    BASE_AI_INTERVAL = 0.6
-    SPEED_OPTIONS = (0.5, 1.0, 2.0, 4.0)
+    def refresh(self, status):
+        active = bool(status.get("active"))
+        self.state_label.text = "CAPTURA ATIVA • OVERLAY ONLINE" if active else "CAPTURA DESLIGADA"
+        self.state_label.color = ACCENT if active else MUTED
+        self.toggle.text = "DESATIVAR CAPTURA" if active else "ATIVAR CAPTURA"
+        self.toggle.active = active
 
-    def build(self):
-        from kivy.uix.floatlayout import FloatLayout
 
-        self.env = MaestroGridEnv(seed=42, max_steps=300)
-        self.state = None
-        self.last_info: dict = {}
-        # Preparado para cursor futuro: controlado pelo usuário, independente da bola
-        self.controlled_player_id: int = -1
-        self.user_team = "A"  # time que o usuário comanda nesta vertical slice
+class HomeScreen(Screen):
+    def __init__(self, app, **kwargs):
+        super().__init__(**kwargs)
+        self.app = app
+        root = FloatLayout()
+        self.add_widget(root)
+        root.add_widget(Panel(pos_hint={"x":0,"y":0}, size_hint=(1,1), fill=BG, radius=0))
 
-        # --- Modo autônomo (v0.2) ---
-        self.agent = HeuristicAgent(seed=42)
-        self.autonomous = False
-        self.sim_speed = 1.0
-        self._ai_event = None
-        self._speed_buttons: dict[float, Button] = {}
+        content = BoxLayout(orientation="vertical", padding=[dp(24),dp(28),dp(24),dp(28)], spacing=dp(14),
+                            size_hint=(1,.82), pos_hint={"x":0,"y":.08})
+        root.add_widget(content)
+        brand = Label(text="MAESTRO", color=TEXT, bold=True, font_size=dp(30),
+                      size_hint_y=None, height=dp(46), halign="left", valign="middle")
+        content.add_widget(brand)
+        sub = Label(text="LABORATÓRIO DE FUTEBOL • OFFLINE", color=ACCENT, bold=True,
+                    font_size=dp(11), size_hint_y=None, height=dp(24), halign="left")
+        content.add_widget(sub)
+        desc = Label(text="Ambiente de teste para simulação, visão e agente autônomo.",
+                     color=MUTED, font_size=dp(13), size_hint_y=None, height=dp(46),
+                     halign="left", valign="middle")
+        desc.bind(size=lambda *_: setattr(desc, "text_size", desc.size))
+        content.add_widget(desc)
 
-        root = BoxLayout(orientation="vertical", padding=dp(6), spacing=dp(4))
+        card = Panel(size_hint_y=None, height=dp(110), radius=16)
+        info = BoxLayout(orientation="vertical", padding=dp(16), spacing=dp(4))
+        info.add_widget(Label(text="AMBIENTE", color=MUTED, font_size=dp(10), bold=True,
+                              size_hint_y=None, height=dp(20), halign="left"))
+        info.add_widget(Label(text="Simulador local + percepção de tela + agente", color=TEXT,
+                              font_size=dp(14), size_hint_y=None, height=dp(28), halign="left"))
+        info.add_widget(Label(text="Nenhuma conexão externa é necessária.", color=MUTED,
+                              font_size=dp(11), size_hint_y=None, height=dp(20), halign="left"))
+        card.add_widget(info)
+        content.add_widget(card)
 
-        # --- Header: placar + status ---
-        self.header = Label(
-            text="Maestro — toque em INICIAR",
-            size_hint_y=None,
-            height=dp(36),
-            font_size=dp(15),
-            bold=True,
-            color=(1, 1, 1, 1),
-        )
-        root.add_widget(self.header)
+        enter = MaestroButton(text="ENTRAR NO LABORATÓRIO", font_size=dp(15), active=True,
+                              size_hint_y=None, height=dp(58))
+        enter.bind(on_release=lambda *_: app.show_lab())
+        content.add_widget(enter)
+        vision = MaestroButton(text="TESTAR VISÃO / CAPTURA", font_size=dp(13),
+                               size_hint_y=None, height=dp(46))
+        vision.bind(on_release=lambda *_: app.show_lab(focus_capture=True))
+        content.add_widget(vision)
+        content.add_widget(Widget())
+        footer = Label(text="MAESTRO v0.3 LAB • DIAGNÓSTICO LOCAL", color=MUTED,
+                       font_size=dp(9), size_hint_y=None, height=dp(20), halign="left")
+        content.add_widget(footer)
 
-        self.status = Label(
-            text="",
-            size_hint_y=None,
-            height=dp(48),
-            font_size=dp(12),
-            color=(0.9, 0.9, 0.7, 1),
-            halign="left",
-            valign="middle",
-        )
-        self.status.bind(size=self.status.setter("text_size"))
-        root.add_widget(self.status)
 
-        # --- Modo (MANUAL / IA) — indicação clara do status da partida ---
-        self.mode_label = Label(
-            text="Modo: MANUAL",
-            size_hint_y=None,
-            height=dp(24),
-            font_size=dp(13),
-            bold=True,
-            color=(0.3, 0.9, 1.0, 1),
-        )
-        root.add_widget(self.mode_label)
+class LabScreen(Screen):
+    def __init__(self, app, **kwargs):
+        super().__init__(**kwargs)
+        self.app = app
+        root = FloatLayout()
+        self.add_widget(root)
+        root.add_widget(Panel(pos_hint={"x":0,"y":0}, size_hint=(1,1), fill=BG, radius=0))
 
-        # --- Controles da IA: JOGAR SOZINHO / PARAR IA ---
-        ai_controls = BoxLayout(
-            orientation="horizontal", size_hint_y=None, height=dp(44), spacing=dp(6)
-        )
-        self.btn_play_solo = Button(text="JOGAR SOZINHO", font_size=dp(13))
-        self.btn_play_solo.bind(on_press=self.on_start_autonomous)
-        self.btn_stop_ai = Button(text="PARAR IA", font_size=dp(13), disabled=True)
-        self.btn_stop_ai.bind(on_press=self.on_stop_autonomous)
-        ai_controls.add_widget(self.btn_play_solo)
-        ai_controls.add_widget(self.btn_stop_ai)
-        root.add_widget(ai_controls)
+        top = BoxLayout(orientation="horizontal", padding=[dp(14),dp(10)], spacing=dp(8),
+                        size_hint=(1,None), height=dp(58), pos_hint={"x":0,"top":1})
+        root.add_widget(top)
+        back = MaestroButton(text="‹", font_size=dp(25), size_hint_x=None, width=dp(46))
+        back.bind(on_release=lambda *_: app.show_home())
+        top.add_widget(back)
+        title_box = BoxLayout(orientation="vertical")
+        title_box.add_widget(Label(text="MAESTRO", color=TEXT, bold=True, font_size=dp(17), halign="left"))
+        self.mode = Label(text="LABORATÓRIO • MANUAL", color=ACCENT, font_size=dp(9), halign="left")
+        title_box.add_widget(self.mode)
+        top.add_widget(title_box)
+        self.capture_chip = MaestroButton(text="● CAPTURA OFF", font_size=dp(9), size_hint_x=None, width=dp(110))
+        self.capture_chip.bind(on_release=lambda *_: app.toggle_capture())
+        top.add_widget(self.capture_chip)
 
-        # --- Controle de velocidade da simulação ---
-        speed_row = BoxLayout(
-            orientation="horizontal", size_hint_y=None, height=dp(36), spacing=dp(4)
-        )
-        speed_row.add_widget(
-            Label(text="Velocidade:", size_hint_x=None, width=dp(78), font_size=dp(12))
-        )
-        for speed in self.SPEED_OPTIONS:
-            label = f"{speed:g}x"
-            btn = Button(text=label, font_size=dp(12))
-            btn.bind(on_press=lambda b, s=speed: self.on_set_speed(s))
-            self._speed_buttons[speed] = btn
-            speed_row.add_widget(btn)
-        root.add_widget(speed_row)
-        self._refresh_speed_buttons()
+        body = BoxLayout(orientation="vertical", padding=[dp(12),0,dp(12),dp(10)], spacing=dp(8),
+                         size_hint=(1,.89), pos_hint={"x":0,"y":0})
+        root.add_widget(body)
 
-        # --- Campo (FieldWidget + overlay de números) ---
-        field_container = FloatLayout(size_hint_y=0.50)
-        self.field = FieldWidget()
-        self.field.size_hint = (1, 1)
-        field_container.add_widget(self.field)
-        self.overlay = PlayerLabelOverlay(self.field)
-        self.overlay.size_hint = (1, 1)
-        field_container.add_widget(self.overlay)
-        root.add_widget(field_container)
+        score = Panel(size_hint_y=None, height=dp(58), radius=12)
+        sb = BoxLayout(orientation="horizontal", padding=[dp(14),dp(7)], spacing=dp(10))
+        self.score = Label(text="A  0   ×   0  B", color=TEXT, bold=True, font_size=dp(18), halign="left")
+        sb.add_widget(self.score)
+        self.clock = Label(text="t=0", color=MUTED, font_size=dp(11), halign="right")
+        sb.add_widget(self.clock)
+        score.add_widget(sb)
+        body.add_widget(score)
 
-        # --- Ações ---
-        actions_label = Label(
-            text="Ações (ator = dono da bola)",
-            size_hint_y=None,
-            height=dp(22),
-            font_size=dp(12),
-            color=(0.8, 0.8, 0.8, 1),
-        )
-        root.add_widget(actions_label)
+        field_panel = Panel(size_hint_y=.48, radius=14)
+        fp = FloatLayout(padding=dp(8))
+        field_panel.add_widget(fp)
+        self.field = FieldWidget(size_hint=(1,1), pos_hint={"x":0,"y":0})
+        fp.add_widget(self.field)
+        self.labels = PlayerLabels(self.field, size_hint=(1,1))
+        fp.add_widget(self.labels)
+        body.add_widget(field_panel)
 
-        self.action_grid = GridLayout(
-            cols=3, size_hint_y=None, height=dp(100), spacing=dp(4)
-        )
-        for name, atype in [
-            ("PASSE", ActionType.PASSE),
-            ("DRIBLE", ActionType.DRIBLE),
-            ("LANÇAR", ActionType.LANCAMENTO),
-            ("CRUZAR", ActionType.CRUZAMENTO),
-            ("FINALIZAR", ActionType.FINALIZAR),
-            ("RESET", None),
-        ]:
-            btn = Button(text=name, font_size=dp(13))
-            if atype is None:
-                btn.bind(on_press=self.on_reset)
-            else:
-                btn.bind(on_press=lambda b, t=atype: self.on_action_type(t))
-            self.action_grid.add_widget(btn)
-        root.add_widget(self.action_grid)
+        status_row = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(7))
+        self.status = Panel(radius=10)
+        status_box = BoxLayout(orientation="vertical", padding=[dp(10),dp(5)])
+        self.status_title = Label(text="PRONTO", color=TEXT, bold=True, font_size=dp(11), halign="left")
+        self.status_detail = Label(text="Partida pronta para teste.", color=MUTED, font_size=dp(9), halign="left")
+        status_box.add_widget(self.status_title); status_box.add_widget(self.status_detail)
+        self.status.add_widget(status_box)
+        status_row.add_widget(self.status)
+        self.capture_card = CaptureCard(app, size_hint_x=.72, radius=10)
+        status_row.add_widget(self.capture_card)
+        body.add_widget(status_row)
 
-        # --- Alvos (aparecem quando necessário) ---
-        self.target_scroll = ScrollView(size_hint_y=None, height=dp(70))
-        self.target_box = BoxLayout(
-            orientation="horizontal", size_hint_x=None, spacing=dp(4)
-        )
+        controls = BoxLayout(orientation="vertical", size_hint_y=.28, spacing=dp(6))
+        main_row = BoxLayout(spacing=dp(6))
+        self.play = MaestroButton(text="▶  JOGAR SOZINHO", active=True, font_size=dp(12))
+        self.play.bind(on_release=lambda *_: app.toggle_ai())
+        main_row.add_widget(self.play)
+        self.pause = MaestroButton(text="Ⅱ  PAUSAR", font_size=dp(12))
+        self.pause.bind(on_release=lambda *_: app.toggle_pause())
+        main_row.add_widget(self.pause)
+        reset = MaestroButton(text="↻  NOVO JOGO", font_size=dp(12))
+        reset.bind(on_release=lambda *_: app.reset_game())
+        main_row.add_widget(reset)
+        controls.add_widget(main_row)
+
+        action_row = GridLayout(cols=5, spacing=dp(5))
+        self.action_buttons = {}
+        for label, typ in [("PASSE",ActionType.PASSE),("DRIBLE",ActionType.DRIBLE),
+                           ("LANÇAMENTO",ActionType.LANCAMENTO),("CRUZAMENTO",ActionType.CRUZAMENTO),
+                           ("FINALIZAR",ActionType.FINALIZAR)]:
+            b = MaestroButton(text=label, font_size=dp(9))
+            b.bind(on_release=lambda _, t=typ: app.on_action_type(t))
+            self.action_buttons[typ] = b
+            action_row.add_widget(b)
+        controls.add_widget(action_row)
+        self.target_scroll = ScrollView(size_hint_y=None, height=dp(38), do_scroll_y=False)
+        self.target_box = BoxLayout(orientation="horizontal", spacing=dp(5), size_hint_x=None)
         self.target_box.bind(minimum_width=self.target_box.setter("width"))
         self.target_scroll.add_widget(self.target_box)
-        root.add_widget(self.target_scroll)
+        controls.add_widget(self.target_scroll)
+        body.add_widget(controls)
 
-        # Log curto
-        self.log = Label(
-            text="",
-            size_hint_y=None,
-            height=dp(56),
-            font_size=dp(11),
-            color=(0.75, 0.85, 0.75, 1),
-            halign="left",
-            valign="top",
-        )
-        self.log.bind(size=self.log.setter("text_size"))
-        root.add_widget(self.log)
+        nav = BoxLayout(size_hint_y=None, height=dp(34), spacing=dp(5))
+        for text, cb in [("VISÃO", app.open_diagnostics), ("AGENTE", app.open_agent_panel)]:
+            b = MaestroButton(text=text, font_size=dp(9)); b.bind(on_release=lambda *_x, c=cb: c()); nav.add_widget(b)
+        body.add_widget(nav)
 
-        # Inicia automaticamente
-        Clock.schedule_once(lambda dt: self.on_reset(None), 0.3)
-        return root
 
-    # ------------------------------------------------------------------
-    # Estado / UI
-    # ------------------------------------------------------------------
+class MaestroMobileApp(App):
+    title = "Maestro"
+    BASE_AI_INTERVAL = .6
+    SPEEDS = (.5, 1, 2, 4)
 
-    def _refresh_ui(self):
-        if not self.state:
-            return
-        self.field.state = self.state
-        # Cursor futuro: por enquanto acompanha o dono da bola do time do usuário
-        owner = self.state.owner()
-        if owner and owner.team == self.user_team:
-            self.controlled_player_id = owner.id
-        self.field.controlled_player_id = self.controlled_player_id
+    def build(self):
+        Window.clearcolor = BG
+        self.env = MaestroGridEnv(seed=42, max_steps=300)
+        self.state = None
+        self.last_info = {}
+        self.agent = HeuristicAgent(seed=42)
+        self.autonomous = False
+        self.paused = False
+        self.speed = 1.0
+        self.ai_event = None
+        self.pending_type: Optional[ActionType] = None
+        self.capture_status = {}
 
-        metrics = self.env.evaluation_metrics()
-        ga = metrics["gols_marcados"]
-        gb = metrics["gols_sofridos"]
-        self.header.text = (
-            f"A {ga}  x  {gb} B   |   t={self.state.time_step}   "
-            f"posse={self.state.possession}"
-        )
+        self.sm = ScreenManager(transition=NoTransition())
+        self.home = HomeScreen(self, name="home")
+        self.lab = LabScreen(self, name="lab")
+        self.sm.add_widget(self.home); self.sm.add_widget(self.lab)
+        Clock.schedule_once(lambda *_: self.reset_game(), .15)
+        Clock.schedule_interval(self.poll_capture, 1.0)
+        return self.sm
 
-        info = self.last_info
-        lines = []
-        if info.get("valid") is False:
-            lines.append(f"⚠ INVÁLIDA: {info.get('reason', '?')}")
-        else:
-            act = info.get("action", "—")
-            succ = info.get("success")
-            if succ is True:
-                lines.append(f"✓ {act} OK")
-            elif succ is False:
-                lines.append(f"✗ {act} falhou")
-            else:
-                lines.append(f"{act}")
-            if info.get("goal"):
-                lines.append(f"GOL DO TIME {info['goal']}!")
-            if info.get("turnover"):
-                lines.append("turnover")
-            if "success_probability" in info:
-                lines.append(f"p={info['success_probability']:.2f}")
-        self.status.text = "  |  ".join(lines) if lines else "Pronto"
+    def show_home(self):
+        self.stop_ai(); self.sm.current = "home"
 
-        # Log das últimas ações
-        self.log.text = self._format_log(info)
+    def show_lab(self, focus_capture=False):
+        self.sm.current = "lab"
+        if focus_capture:
+            self.set_status("VISÃO", "Ative a captura para iniciar o diagnóstico de tela.")
 
-    def _format_log(self, info: dict) -> str:
-        if not info:
-            return ""
-        parts = [f"ação={info.get('action')}"]
-        if "actor" in info:
-            parts.append(f"ator={info['actor']}")
-        if "target" in info:
-            parts.append(f"alvo={info['target']}")
-        if "target_cell" in info:
-            parts.append(f"célula={info['target_cell']}")
-        if info.get("valid") is False:
-            parts.append(f"motivo={info.get('reason')}")
-        return "  ".join(parts)
+    def reset_game(self):
+        self.stop_ai()
+        self.paused = False
+        self.state, _ = self.env.reset()
+        self.last_info = {}
+        self.lab.mode.text = "LABORATÓRIO • MANUAL"
+        self.lab.pause.text = "Ⅱ  PAUSAR"
+        self._refresh_ui()
 
-    def _clear_targets(self):
-        self.target_box.clear_widgets()
-
-    def _show_teammate_targets(self, action_type: ActionType):
-        self._clear_targets()
-        owner = self.state.owner()
-        if not owner:
-            return
-        teammates = [p for p in self.state.team_of(owner.id) if p.id != owner.id]
-        for tm in teammates:
-            btn = Button(
-                text=f"→ {tm.team}{tm.id} ({tm.cell[0]},{tm.cell[1]})",
-                size_hint_x=None,
-                width=dp(120),
-                font_size=dp(12),
-            )
-            btn.bind(
-                on_press=lambda b, t=tm, at=action_type: self._execute(
-                    Action(type=at, actor_id=owner.id, target_id=t.id)
-                )
-            )
-            self.target_box.add_widget(btn)
-
-    def _show_dribble_targets(self):
-        self._clear_targets()
-        owner = self.state.owner()
-        if not owner:
-            return
-        oc, or_ = owner.cell
-        directions = [
-            (-1, -1), (0, -1), (1, -1),
-            (-1, 0),           (1, 0),
-            (-1, 1),  (0, 1),  (1, 1),
-        ]
-        for dc, dr in directions:
-            tc, tr = oc + dc, or_ + dr
-            if 0 <= tc < self.state.grid_cols and 0 <= tr < self.state.grid_rows:
-                dist = self.state.cell_distance(owner.cell, (tc, tr))
-                if dist <= self.env.MAX_DRIBBLE_DISTANCE:
-                    btn = Button(
-                        text=f"→ ({tc},{tr})",
-                        size_hint_x=None,
-                        width=dp(80),
-                        font_size=dp(12),
-                    )
-                    btn.bind(
-                        on_press=lambda b, cell=(tc, tr): self._execute(
-                            Action(
-                                type=ActionType.DRIBLE,
-                                actor_id=owner.id,
-                                target_cell=cell,
-                            )
-                        )
-                    )
-                    self.target_box.add_widget(btn)
-
-    def _show_lancamento_targets(self):
-        self._clear_targets()
-        owner = self.state.owner()
-        if not owner:
-            return
-        # Células à frente (até 4 colunas) na direção de ataque
-        direction = 1 if owner.team == "A" else -1
-        oc, or_ = owner.cell
-        for reach in range(2, 5):
-            tc = oc + direction * reach
-            for dr in (-1, 0, 1):
-                tr = or_ + dr
-                if 0 <= tc < self.state.grid_cols and 0 <= tr < self.state.grid_rows:
-                    btn = Button(
-                        text=f"→ ({tc},{tr})",
-                        size_hint_x=None,
-                        width=dp(80),
-                        font_size=dp(12),
-                    )
-                    btn.bind(
-                        on_press=lambda b, cell=(tc, tr): self._execute(
-                            Action(
-                                type=ActionType.LANCAMENTO,
-                                actor_id=owner.id,
-                                target_cell=cell,
-                            )
-                        )
-                    )
-                    self.target_box.add_widget(btn)
-
-    # ------------------------------------------------------------------
-    # Ações
-    # ------------------------------------------------------------------
-
-    def on_reset(self, _btn):
+    def toggle_ai(self):
         if self.autonomous:
-            self.on_stop_autonomous(None)
-        self.state, info = self.env.reset()
-        self.last_info = info
-        self.controlled_player_id = (
-            self.state.owner().id if self.state.owner() else -1
-        )
-        self._clear_targets()
-        self._refresh_ui()
-        self.status.text = "Partida iniciada (seed=42)"
-
-    def on_action_type(self, action_type: ActionType):
-        if not self.state:
-            return
-        owner = self.state.owner()
-        if not owner:
-            self.status.text = "Sem dono da bola"
-            return
-
-        if action_type == ActionType.FINALIZAR:
-            self._execute(Action(type=ActionType.FINALIZAR, actor_id=owner.id))
-        elif action_type in (ActionType.PASSE, ActionType.CRUZAMENTO):
-            self._show_teammate_targets(action_type)
-            self.status.text = f"Escolha o alvo para {action_type.value}"
-        elif action_type == ActionType.DRIBLE:
-            self._show_dribble_targets()
-            self.status.text = "Escolha a célula do drible"
-        elif action_type == ActionType.LANCAMENTO:
-            self._show_lancamento_targets()
-            self.status.text = "Escolha a célula do lançamento"
-
-    def _execute(self, action: Action):
-        self._clear_targets()
-        self.state, reward, done, info = self.env.step(action)
-        self.last_info = info
-        self._refresh_ui()
-        if done:
-            self.status.text += "  |  FIM DE PARTIDA"
-            if self.autonomous:
-                self.on_stop_autonomous(None)
-
-    # ------------------------------------------------------------------
-    # Modo autônomo (IA)
-    # ------------------------------------------------------------------
-
-    def on_start_autonomous(self, _btn):
-        if not self.state:
-            return
-        if self.state.owner() is None:
-            self.status.text = "Sem dono da bola — não é possível iniciar a IA"
+            self.stop_ai()
             return
         self.autonomous = True
-        self._clear_targets()
-        self.action_grid.disabled = True
-        self.btn_play_solo.disabled = True
-        self.btn_stop_ai.disabled = False
-        self.mode_label.text = f"Modo: IA (autônoma) — {self.sim_speed:g}x"
-        self._schedule_ai_clock()
+        self.paused = False
+        self.lab.play.text = "■  PARAR IA"
+        self.lab.play.active = True
+        self.lab.mode.text = f"LABORATÓRIO • IA {self.speed:g}x"
+        self.schedule_ai()
+        self.set_status("IA AUTÔNOMA", "O agente está decidindo pelo estado do simulador.")
 
-    def on_stop_autonomous(self, _btn):
+    def stop_ai(self):
         self.autonomous = False
-        if self._ai_event is not None:
-            self._ai_event.cancel()
-            self._ai_event = None
-        self.action_grid.disabled = False
-        self.btn_play_solo.disabled = False
-        self.btn_stop_ai.disabled = True
-        self.mode_label.text = "Modo: MANUAL"
+        if self.ai_event is not None:
+            self.ai_event.cancel(); self.ai_event = None
+        if hasattr(self, "lab"):
+            self.lab.play.text = "▶  JOGAR SOZINHO"
+            self.lab.play.active = True
+            self.lab.mode.text = "LABORATÓRIO • MANUAL"
 
-    def on_set_speed(self, speed: float):
-        self.sim_speed = speed
-        self._refresh_speed_buttons()
-        if self.autonomous:
-            self.mode_label.text = f"Modo: IA (autônoma) — {self.sim_speed:g}x"
-            self._schedule_ai_clock()  # reagenda no novo intervalo
+    def toggle_pause(self):
+        self.paused = not self.paused
+        self.lab.pause.text = "▶  CONTINUAR" if self.paused else "Ⅱ  PAUSAR"
+        if self.paused:
+            self.set_status("PAUSADO", "Simulação congelada. A captura pode continuar ativa.")
+        elif self.autonomous:
+            self.set_status("IA AUTÔNOMA", "Agente retomado.")
 
-    def _refresh_speed_buttons(self):
-        for speed, btn in self._speed_buttons.items():
-            selected = speed == self.sim_speed
-            btn.bold = selected
-            btn.background_color = (0.25, 0.65, 0.95, 1) if selected else (1, 1, 1, 1)
+    def schedule_ai(self):
+        if self.ai_event is not None:
+            self.ai_event.cancel()
+        self.ai_event = Clock.schedule_interval(self.ai_tick, self.BASE_AI_INTERVAL / self.speed)
 
-    def _schedule_ai_clock(self):
-        if self._ai_event is not None:
-            self._ai_event.cancel()
-        interval = self.BASE_AI_INTERVAL / self.sim_speed
-        self._ai_event = Clock.schedule_interval(self._ai_step, interval)
-
-    def _ai_step(self, _dt):
-        if not self.autonomous or not self.state:
-            return
-        owner = self.state.owner()
-        if owner is None:
-            self.on_stop_autonomous(None)
+    def ai_tick(self, _dt):
+        if not self.autonomous or self.paused or not self.state:
             return
         action = self.agent.decide(self.state, self.env)
-        if action is None:
-            self.on_stop_autonomous(None)
+        if action is not None:
+            self.execute(action)
+        if self.state.time_step >= 300:
+            self.stop_ai()
+
+    def on_action_type(self, action_type):
+        if self.autonomous or self.paused or not self.state:
             return
-        self._execute(action)
+        self.pending_type = action_type
+        self.rebuild_targets(action_type)
+        if action_type == ActionType.FINALIZAR:
+            owner = self.state.owner()
+            if owner: self.execute(Action(type=action_type, actor_id=owner.id))
+
+    def rebuild_targets(self, action_type):
+        self.lab.target_box.clear_widgets()
+        owner = self.state.owner() if self.state else None
+        if not owner or action_type == ActionType.FINALIZAR:
+            return
+        if action_type in (ActionType.PASSE, ActionType.CRUZAMENTO):
+            targets = [p for p in self.state.team_of(owner.id) if p.id != owner.id]
+            for p in targets:
+                b = MaestroButton(text=f"JOGADOR {p.id}", font_size=dp(9), size_hint_x=None, width=dp(92))
+                b.bind(on_release=lambda _, pid=p.id: self.execute(Action(type=self.pending_type, actor_id=owner.id, target_id=pid)))
+                self.lab.target_box.add_widget(b)
+        else:
+            direction = 1 if owner.team == "A" else -1
+            for dc, dr in [(direction,0),(direction,-1),(direction,1),(0,-1),(0,1)]:
+                cell=(owner.cell[0]+dc, owner.cell[1]+dr)
+                if 0 <= cell[0] < self.state.grid_cols and 0 <= cell[1] < self.state.grid_rows:
+                    b=MaestroButton(text=f"{cell[0]},{cell[1]}", font_size=dp(9), size_hint_x=None, width=dp(62))
+                    b.bind(on_release=lambda _, c=cell: self.execute(Action(type=self.pending_type, actor_id=owner.id, target_cell=c)))
+                    self.lab.target_box.add_widget(b)
+
+    def execute(self, action):
+        try:
+            self.state, reward, done, info = self.env.step(action)
+            self.last_info = info
+            self.lab.target_box.clear_widgets()
+            self.pending_type = None
+            self._refresh_ui()
+            if done:
+                self.stop_ai()
+                self.set_status("FIM", "Partida encerrada. Use NOVO JOGO para reiniciar.")
+        except Exception as exc:
+            self.set_status("ERRO", str(exc))
+
+    def _refresh_ui(self):
+        if not self.state: return
+        self.lab.field.state = self.state
+        owner = self.state.owner()
+        if owner and owner.team == "A":
+            self.lab.field.controlled_player_id = owner.id
+        metrics = self.env.evaluation_metrics()
+        self.lab.score.text = f"A  {metrics['gols_marcados']}   ×   {metrics['gols_sofridos']}  B"
+        self.lab.clock.text = f"t={self.state.time_step:03d}   posse={self.state.possession}"
+        info = self.last_info
+        act = info.get("action")
+        if info.get("valid") is False:
+            self.set_status("AÇÃO INVÁLIDA", str(info.get("reason", "motivo desconhecido")))
+        elif info.get("goal"):
+            self.set_status("GOL", f"Time {info['goal']} marcou.")
+        elif act:
+            self.set_status("ÚLTIMA AÇÃO", f"{act} • {'sucesso' if info.get('success') else 'falha'}")
+
+    def set_status(self, title, detail):
+        if not hasattr(self, "lab"): return
+        self.lab.status_title.text = title
+        self.lab.status_detail.text = detail
+
+    # ------------------------------------------------------------------
+    # Capture / vision control. Read-only observation; no input injection.
+    # ------------------------------------------------------------------
+    def _capture_broadcast(self, action):
+        try:
+            from jnius import autoclass
+            PythonActivity = autoclass("org.kivy.android.PythonActivity")
+            Intent = autoclass("android.content.Intent")
+            intent = Intent(action)
+            intent.setPackage(PythonActivity.mActivity.getPackageName())
+            PythonActivity.mActivity.sendBroadcast(intent)
+            return True
+        except Exception as exc:
+            self.set_status("CAPTURA", f"Não foi possível enviar o comando: {exc}")
+            return False
+
+    def toggle_capture(self):
+        active = bool(self.capture_status.get("active"))
+        self._capture_broadcast("org.maestro.CAPTURE_STOP" if active else "org.maestro.CAPTURE_REQUEST")
+        self.set_status("CAPTURA", "Solicitação enviada; aguardando status do Android.")
+
+    def poll_capture(self, _dt):
+        try:
+            path = Path(self.user_data_dir) / "maestro_capture_status.json"
+            if path.exists():
+                self.capture_status = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        if not hasattr(self, "lab"): return
+        self.lab.capture_card.refresh(self.capture_status)
+        active = bool(self.capture_status.get("active"))
+        self.lab.capture_chip.text = "● CAPTURA ON" if active else "● CAPTURA OFF"
+        self.lab.capture_chip.active = active
+        if active:
+            p = self.capture_status.get("perception") or {}
+            scene = float(p.get("scene_confidence", 0))
+            self.lab.status_detail.text = f"Visão {scene:.0%} • {self.capture_status.get('fps',0):.1f} FPS • leitura somente"
+
+    def open_diagnostics(self):
+        status = self.capture_status
+        p = status.get("perception") or {}
+        text = (
+            f"CAPTURA: {'ATIVA' if status.get('active') else 'INATIVA'}\n"
+            f"TELA: {status.get('width','—')} × {status.get('height','—')}\n"
+            f"FPS: {status.get('fps',0)}\n"
+            f"CAMPO: {float(p.get('field_confidence',0)):.0%}\n"
+            f"BOLA: {float(p.get('ball_confidence',0)):.0%}\n"
+            f"CENA: {float(p.get('scene_confidence',0)):.0%}\n"
+            f"INCERTO: {'SIM' if p.get('uncertain') else 'NÃO'}\n"
+            f"ERRO: {status.get('error') or 'nenhum'}"
+        )
+        from kivy.uix.popup import Popup
+        Popup(title="MAESTRO VISION • DIAGNÓSTICO", content=Label(text=text, color=TEXT,
+              halign="left", valign="top"), size_hint=(.88,.62)).open()
+
+    def open_agent_panel(self):
+        from kivy.uix.popup import Popup
+        metrics = self.env.evaluation_metrics() if self.state else {}
+        text = (
+            f"MODO: {'IA AUTÔNOMA' if self.autonomous else 'MANUAL'}\n"
+            f"VELOCIDADE: {self.speed:g}x\n"
+            f"PASSOS: {self.state.time_step if self.state else 0}\n"
+            f"GOLS A/B: {metrics.get('gols_marcados',0)} / {metrics.get('gols_sofridos',0)}\n\n"
+            "O agente usa somente o estado público do simulador.\n"
+            "A captura é observação e diagnóstico; não injeta comandos."
+        )
+        Popup(title="MAESTRO AGENT", content=Label(text=text, color=TEXT, halign="left", valign="top"),
+              size_hint=(.88,.52)).open()
 
 
 if __name__ == "__main__":
