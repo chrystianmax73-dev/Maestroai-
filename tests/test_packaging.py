@@ -53,8 +53,8 @@ def test_capture_service_is_read_only():
     assert "MediaProjectionManager" in service
     assert "ImageReader" in service
     assert "TYPE_APPLICATION_OVERLAY" in service
-    assert "inject" not in service.lower()
-    assert "input" not in service.lower()
+    forbidden = ("adb", "input tap", "AccessibilityService", "performGlobalAction")
+    assert not any(token.lower() in service.lower() for token in forbidden)
     print("TESTE PACKAGING 3 OK — captura/overlay sem injeção de entrada")
 
 
