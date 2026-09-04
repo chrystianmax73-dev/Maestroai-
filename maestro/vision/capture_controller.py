@@ -52,14 +52,19 @@ class CaptureController:
             self._activity_module = activity
             self._autoclass = autoclass
             self._bind_activity_result()
-        except (ImportError, RuntimeError):
-            pass
+        except Exception:
+            # Captura é opcional: falha de bridge nunca pode impedir o startup.
+            self._android = False
+            self._activity_module = None
+            self._autoclass = None
 
     @property
     def available(self) -> bool:
         return self._android
 
     def _get_activity(self):
+        if not self.available:
+            raise RuntimeError("captura Android indisponível")
         if self._activity is None:
             self._activity = self._autoclass("org.kivy.android.PythonActivity").mActivity
         return self._activity
@@ -87,18 +92,12 @@ class CaptureController:
         except (FileNotFoundError, OSError, ValueError):
             return CaptureStatus()
         return CaptureStatus(
-            active=bool(data.get("active", False)),
-            frames=int(data.get("frames", 0)),
-            fps=float(data.get("fps", 0.0)),
-            width=int(data.get("width", 0)),
-            height=int(data.get("height", 0)),
-            last_frame=str(data.get("last_frame", "")),
-            error=str(data.get("error", "")),
-            scene_confidence=float(data.get("scene_confidence", 0.0)),
-            ball_confidence=float(data.get("ball_confidence", 0.0)),
-            uncertain=bool(data.get("uncertain", True)),
-            agent_active=bool(data.get("agent_active", False)),
-            agent_state=str(data.get("agent_state", "OFF")),
+            active=bool(data.get("active", False)), frames=int(data.get("frames", 0)),
+            fps=float(data.get("fps", 0.0)), width=int(data.get("width", 0)),
+            height=int(data.get("height", 0)), last_frame=str(data.get("last_frame", "")),
+            error=str(data.get("error", "")), scene_confidence=float(data.get("scene_confidence", 0.0)),
+            ball_confidence=float(data.get("ball_confidence", 0.0)), uncertain=bool(data.get("uncertain", True)),
+            agent_active=bool(data.get("agent_active", False)), agent_state=str(data.get("agent_state", "OFF")),
         )
 
     def _notify(self, text: str) -> None:
@@ -123,7 +122,6 @@ class CaptureController:
                 activity.startActivity(intent)
                 self._notify("Permita sobreposição e toque em ATIVAR CAPTURA novamente")
                 return False
-
             Context = self._autoclass("android.content.Context")
             MPM = self._autoclass("android.media.projection.MediaProjectionManager")
             manager = activity.getSystemService(Context.MEDIA_PROJECTION_SERVICE)
@@ -141,13 +139,10 @@ class CaptureController:
         if int(request_code) != self.REQUEST_CODE:
             return
         try:
-            result_ok = int(result_code) == -1  # Activity.RESULT_OK
-            if not result_ok or data_intent is None:
+            if int(result_code) != -1 or data_intent is None:
                 self._notify("Captura cancelada pelo usuário")
                 return
             self._start_service()
-            # O serviço é um processo separado; o token é entregue por broadcast
-            # depois que o processo do serviço já está iniciado.
             self._send_result(result_code, data_intent)
             self._notify("Autorização recebida; iniciando captura…")
         except Exception as exc:
