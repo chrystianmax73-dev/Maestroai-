@@ -132,10 +132,9 @@ class CaptureController:
     def stop(self) -> None:
         if not self.available:
             return
-        try:
-            self._autoclass("org.maestro.maestrogrid.ServiceCapture").stop(self._get_activity())
-        except Exception:
-            self._send(self.STOP_ACTION)
+        # A parada é feita pelo receiver do próprio serviço. Isso evita depender
+        # de uma API estática que o p4a não garante no PythonService gerado.
+        self._send(self.STOP_ACTION)
         self._notify("Captura parada")
 
     def close(self) -> None:
