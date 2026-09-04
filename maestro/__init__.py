@@ -1,4 +1,4 @@
-"""Maestro core package — environment logic only."""
+"""Maestro core package — environment logic + agente heurístico offline."""
 from .maestro_grid_env_v2 import (
     MaestroGridEnv,
     GameState,
@@ -8,6 +8,7 @@ from .maestro_grid_env_v2 import (
     ActionType,
     Cell,
 )
+from .heuristic_agent import HeuristicAgent
 
 __all__ = [
     "MaestroGridEnv",
@@ -17,4 +18,5 @@ __all__ = [
     "Action",
     "ActionType",
     "Cell",
+    "HeuristicAgent",
 ]
