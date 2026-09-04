@@ -54,10 +54,15 @@ def test_service_bridge_matches_buildozer_name():
     controller = (ROOT / "maestro/vision/capture_controller.py").read_text(encoding="utf-8")
     java = (ROOT / "android_src/org/maestro/capture/CaptureActivity.java").read_text(encoding="utf-8")
     assert spec["app"]["package.name"] == "maestrogrid"
-    assert "ServiceCapture" in controller and "ServiceCapture" in java
-    assert "ServiceCapture.start" not in controller
-    assert "ServiceCapture.stop" in controller
+    # p4a deriva ServiceCapture de services = capture:services/capture.py.
+    # A Activity inicia o serviço; o controller pode parar por stop() ou pelo broadcast.
+    assert "ServiceCapture.start" in java
+    assert "Class.forName(\"org.maestro.maestrogrid.ServiceCapture\")" in java
+    assert "ServiceCapture" in controller
+    assert ("ServiceCapture.stop" in controller) or ("CAPTURE_STOP" in controller)
     assert "CAPTURE_RESULT" in service
+    assert "CAPTURE_STOP" in service
+    assert "getParcelableExtra(\"data_intent\")" in service
 
 
 def test_ui_has_real_lab_controls():
