@@ -1,10 +1,16 @@
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
 from maestro.vision.screen_perception import ScreenPerception
 
 
 def synthetic_scene(width=960, height=540):
     def pixel(x, y):
-        # Gramado verde com linhas brancas, dois grupos de uniformes e uma
-        # pequena bola branca isolada perto do centro.
         if 120 < x < 840 and 70 < y < 490:
             if abs(x - 480) < 3 or abs(y - 280) < 3:
                 return (235, 235, 235)
@@ -49,3 +55,11 @@ def test_is_deterministic():
     a = ScreenPerception().analyze(width, height, pixel).to_dict()
     b = ScreenPerception().analyze(width, height, pixel).to_dict()
     assert a == b
+
+
+if __name__ == "__main__":
+    test_detects_field_and_scene()
+    test_detects_two_uniform_color_signals()
+    test_is_conservative_on_non_football_scene()
+    test_is_deterministic()
+    print("=== TODOS OS TESTES DE PERCEPÇÃO PASSARAM ===")
