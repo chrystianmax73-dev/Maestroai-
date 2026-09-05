@@ -44,6 +44,8 @@ jobs:
           python tests/test_screen_perception.py
           python tests/test_frame_source.py
           python tests/test_execution_loop.py
+          python tests/test_tactical_engine.py
+          python tests/test_runtime_coordinator.py
           python tests/test_packaging.py
       - name: Install Buildozer
         run: |
