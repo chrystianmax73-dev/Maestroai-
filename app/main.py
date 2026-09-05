@@ -16,7 +16,6 @@ from kivy.metrics import dp
 from kivy.properties import BooleanProperty, NumericProperty, ObjectProperty
 from kivy.uix.behaviors import ButtonBehavior
 from kivy.uix.boxlayout import BoxLayout
-from kivy.uix.gridlayout import GridLayout
 from kivy.uix.label import Label
 from kivy.uix.screenmanager import NoTransition, Screen, ScreenManager
 from kivy.uix.scrollview import ScrollView
@@ -76,22 +75,6 @@ class MaestroButton(ButtonBehavior, Label):
         with self.canvas.before:
             Color(*(self.active_fill if self.active else self.fill))
             RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(9)])
-
-
-class Dot(Widget):
-    active = BooleanProperty(False)
-    dot_color = ObjectProperty(MUTED)
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.bind(pos=self.draw, size=self.draw, active=self.draw)
-        self.draw()
-
-    def draw(self, *_):
-        self.canvas.clear()
-        with self.canvas:
-            Color(*(ACCENT if self.active else self.dot_color))
-            Ellipse(pos=self.pos, size=self.size)
 
 
 class FieldWidget(Widget):
@@ -209,7 +192,14 @@ class CandidateRow(Panel):
         why.bind(size=lambda w, *_: setattr(w, "text_size", w.size))
         box.add_widget(why)
         self.add_widget(box)
-        self.bind(on_touch_down=lambda w, touch: on_select(candidate) if w.collide_point(*touch.pos) else None)
+        self._callback = on_select
+        self._candidate = candidate
+
+    def on_touch_down(self, touch):
+        if self.collide_point(*touch.pos):
+            self._callback(self._candidate)
+            return True
+        return super().on_touch_down(touch)
 
 
 class LabScreen(Screen):
@@ -220,10 +210,12 @@ class LabScreen(Screen):
         self.add_widget(root)
 
         header = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(7))
-        header.add_widget(MaestroButton(text="‹", font_size=dp(24), size_hint_x=None, width=dp(40), on_release=lambda *_: app.show_home()))
+        back = MaestroButton(text="‹", font_size=dp(24), size_hint_x=None, width=dp(40))
+        back.bind(on_release=lambda *_: app.show_home())
+        header.add_widget(back)
         title = BoxLayout(orientation="vertical")
         title.add_widget(Label(text="MAESTRO / TACTICAL LAB", color=TEXT, bold=True, font_size=dp(15), halign="left"))
-        self.subtitle = Label(text="SIMULADOR • DECISÃO • EXECUÇÃO CONTROLADA", color=ACCENT, font_size=dp(8.5), halign="left"))
+        self.subtitle = Label(text="SIMULADOR • DECISÃO • EXECUÇÃO CONTROLADA", color=ACCENT, font_size=dp(8.5), halign="left")
         title.add_widget(self.subtitle)
         header.add_widget(title)
         self.run_chip = MaestroButton(text="● IDLE", font_size=dp(9), size_hint_x=None, width=dp(76))
@@ -249,7 +241,7 @@ class LabScreen(Screen):
         fp.add_widget(self.labels)
         left.add_widget(field_panel)
 
-        controls = BoxLayout(size_hint_y=None, height=dp(82), spacing=dp(5))
+        controls = BoxLayout(size_hint_y=None, height=dp(42), spacing=dp(5))
         self.play = MaestroButton(text="▶  IA AUTÔNOMA", active=True, font_size=dp(11))
         self.play.bind(on_release=lambda *_: app.toggle_ai())
         controls.add_widget(self.play)
@@ -420,8 +412,7 @@ class MaestroMobileApp(App):
         candidates = self.tactics.evaluate(self.state, self.env)
         self.lab.candidate_box.clear_widgets()
         for i, candidate in enumerate(candidates[:7], 1):
-            row = CandidateRow(candidate, i, self.select_candidate)
-            self.lab.candidate_box.add_widget(row)
+            self.lab.candidate_box.add_widget(CandidateRow(candidate, i, self.select_candidate))
         if candidates:
             best = candidates[0]
             self.lab.t_action.text = f"{best.label} {best.score:.2f}"
@@ -429,7 +420,8 @@ class MaestroMobileApp(App):
     def select_candidate(self, candidate):
         if not self.state or self.autonomous or self.paused:
             return
-        self.lab.field.selected_id = self.state.owner().id if self.state.owner() else -1
+        owner = self.state.owner()
+        self.lab.field.selected_id = owner.id if owner else -1
         self.execute(candidate.action, source=f"MANUAL CANDIDATO {candidate.label} {candidate.score:.2f}")
 
     def manual_action(self, action_type):
@@ -471,7 +463,6 @@ class MaestroMobileApp(App):
         self.lab.field.state = self.state
         owner = self.state.owner()
         self.lab.field.selected_id = owner.id if owner else -1
-        metrics = self.env.evaluation_metrics()
         pressure = self.state.pressure_on(owner.id) if owner else 0.0
         self.lab.t_posse.text = self.state.possession
         self.lab.t_step.text = f"{self.state.time_step:03d}"
