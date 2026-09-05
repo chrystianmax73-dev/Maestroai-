@@ -1,8 +1,8 @@
 """Execution boundary for Maestro-controlled environments.
 
-The decision engine produces an Action; an Executor is responsible for
-applying that action to an environment that Maestro owns and controls.
-External-app input adapters are intentionally not part of this module.
+The decision engine produces an Action; an Executor applies it to an
+environment owned by Maestro. External-app input adapters are intentionally
+outside this module.
 """
 
 from __future__ import annotations
@@ -14,16 +14,16 @@ from ..maestro_grid_env_v2 import Action, MaestroGridEnv
 
 
 class Executor(ABC):
-    """Abstract execution boundary used by autonomous loops."""
+    """Stable execution boundary used by autonomous loops."""
 
     @abstractmethod
     def execute(self, action: Action) -> Any:
-        """Apply *action* and return the environment result."""
+        """Apply an action and return the environment result."""
         raise NotImplementedError
 
 
 class SimulatorExecutor(Executor):
-    """Executes actions directly in MaestroGridEnv."""
+    """Execute actions directly in the controlled Maestro simulator."""
 
     def __init__(self, env: MaestroGridEnv):
         self.env = env
