@@ -9,6 +9,7 @@ from .maestro_grid_env_v2 import (
     Cell,
 )
 from .heuristic_agent import HeuristicAgent
+from .tactical_engine import TacticalEngine, TacticalCandidate
 
 __all__ = [
     "MaestroGridEnv",
@@ -19,4 +20,6 @@ __all__ = [
     "ActionType",
     "Cell",
     "HeuristicAgent",
+    "TacticalEngine",
+    "TacticalCandidate",
 ]
