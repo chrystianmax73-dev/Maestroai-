@@ -3,27 +3,29 @@ title = Maestro
 package.name = maestrogrid
 package.domain = org.maestro
 source.dir = .
-source.include_exts = py,png,jpg,kv,atlas,json,txt,java
-source.include_patterns = maestro/**,app/**,services/**,android_src/**
-version = 0.3.1
+source.include_exts = py,png,jpg,kv,atlas,json,txt
+# Empacota só o que é de fato usado pelo app compilado: núcleo do
+# simulador, IA, camada de visão genérica (maestro/vision, sem
+# capture_controller.py sendo importado por ninguém) e a interface.
+# services/**, android_src/** e o pacote `android`/jnius do capture
+# controller NÃO são incluídos aqui — ficam no repositório como código
+# isolado, fora do build (ver README/ARCHITECTURE.md).
+source.include_patterns = maestro/**,app/**
+version = 0.4.0
 
-# Dependências Python empacotadas no APK.
-# A release v2024.01.21 do python-for-android usa Python 3.11
-# de forma consistente para hostpython3 e python3.
+# python-for-android 2024.01.21 usa Python 3.11 de forma consistente
+# para hostpython3 e python3.
 requirements = python3,kivy
-
-# Serviço de captura: somente foreground. A autorização MediaProjection
-# ocorre sob ação explícita do usuário antes do serviço iniciar a sessão.
-services = capture:services/capture.py:foreground
 
 orientation = portrait
 fullscreen = 0
-android.permissions = FOREGROUND_SERVICE,FOREGROUND_SERVICE_MEDIA_PROJECTION,SYSTEM_ALERT_WINDOW,POST_NOTIFICATIONS
-android.api = 33
+# Sem serviço de captura nesta build: nenhuma permissão de overlay,
+# projeção de mídia ou serviço em primeiro plano é necessária.
+android.permissions = 
+android.api = 34
 android.minapi = 24
 android.ndk = 25b
 android.archs = arm64-v8a
-android.add_src = %(source.dir)s/android_src
 android.allow_backup = False
 android.presplash_color = #2E7D32
 android.accept_sdk_license = True

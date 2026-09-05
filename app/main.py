@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 from typing import Optional
@@ -26,7 +25,12 @@ from kivy.uix.scrollview import ScrollView
 from kivy.uix.widget import Widget
 
 from maestro import Action, ActionType, HeuristicAgent, MaestroGridEnv
-from maestro.vision.capture_controller import CaptureController
+
+# NOTA DE ARQUITETURA: o módulo de captura de tela Android
+# (maestro/vision/capture_controller.py, services/capture.py, android_src/)
+# existe no repositório mas NÃO é importado nem empacotado nesta build.
+# Ele fica isolado como ponto de integração futuro (ver README/ARCHITECTURE),
+# sem nenhuma wiring ativa no app que é de fato compilado e distribuído.
 
 
 # ---------------------------------------------------------------------------
@@ -212,6 +216,13 @@ class PlayerLabels(Widget):
 
 
 class CaptureCard(Panel):
+    """Cartão de status do módulo de Visão.
+
+    Nesta build, o módulo de captura de tela Android não está incluído
+    (ver nota no topo do arquivo) — o cartão só informa isso, sem
+    oferecer nenhuma ação real de captura.
+    """
+
     def __init__(self, app, **kwargs):
         super().__init__(**kwargs)
         self.app = app
@@ -219,13 +230,10 @@ class CaptureCard(Panel):
         title = Label(text="MAESTRO VISION", color=TEXT, bold=True, font_size=dp(15),
                       halign="left", valign="middle", size_hint_y=None, height=dp(26))
         box.add_widget(title)
-        self.state_label = Label(text="CAPTURA DESLIGADA", color=MUTED, font_size=dp(12),
+        self.state_label = Label(text="NÃO INCLUÍDO NESTA BUILD", color=MUTED, font_size=dp(12),
                                  halign="left", valign="middle", size_hint_y=None, height=dp(24))
         box.add_widget(self.state_label)
         row = BoxLayout(spacing=dp(6), size_hint_y=None, height=dp(38))
-        self.toggle = MaestroButton(text="ATIVAR CAPTURA", font_size=dp(11))
-        self.toggle.bind(on_release=lambda *_: app.toggle_capture())
-        row.add_widget(self.toggle)
         diag = MaestroButton(text="DIAGNÓSTICO", font_size=dp(11))
         diag.bind(on_release=lambda *_: app.open_diagnostics())
         row.add_widget(diag)
@@ -233,11 +241,10 @@ class CaptureCard(Panel):
         self.add_widget(box)
 
     def refresh(self, status):
-        active = bool(status.get("active"))
-        self.state_label.text = "CAPTURA ATIVA • OVERLAY ONLINE" if active else "CAPTURA DESLIGADA"
-        self.state_label.color = ACCENT if active else MUTED
-        self.toggle.text = "DESATIVAR CAPTURA" if active else "ATIVAR CAPTURA"
-        self.toggle.active = active
+        # Estático de propósito — sem módulo de captura não há status real
+        # pra mostrar, e não colocamos números/estado inventado aqui.
+        self.state_label.text = "NÃO INCLUÍDO NESTA BUILD"
+        self.state_label.color = MUTED
 
 
 class HomeScreen(Screen):
@@ -307,7 +314,7 @@ class LabScreen(Screen):
         self.mode = Label(text="LABORATÓRIO • MANUAL", color=ACCENT, font_size=dp(9), halign="left")
         title_box.add_widget(self.mode)
         top.add_widget(title_box)
-        self.capture_chip = MaestroButton(text="● CAPTURA OFF", font_size=dp(9), size_hint_x=None, width=dp(110))
+        self.capture_chip = MaestroButton(text="● VISÃO N/D", font_size=dp(9), size_hint_x=None, width=dp(110))
         self.capture_chip.bind(on_release=lambda *_: app.toggle_capture())
         top.add_widget(self.capture_chip)
 
@@ -325,7 +332,7 @@ class LabScreen(Screen):
         body.add_widget(score)
 
         field_panel = Panel(size_hint_y=.48, radius=14)
-        fp = FloatLayout(padding=dp(8))
+        fp = FloatLayout()  # FloatLayout não tem propriedade `padding` — causava TypeError no build()
         field_panel.add_widget(fp)
         self.field = FieldWidget(size_hint=(1,1), pos_hint={"x":0,"y":0})
         fp.add_widget(self.field)
@@ -397,17 +404,15 @@ class MaestroMobileApp(App):
         self.speed = 1.0
         self.ai_event = None
         self.pending_type: Optional[ActionType] = None
+        # Sem módulo de captura nesta build: capture_status fica sempre vazio,
+        # e a UI mostra isso honestamente em vez de inventar números.
         self.capture_status = {}
-        self.capture = CaptureController(
-            status_callback=lambda t: self.set_status("CAPTURA", t)
-        )
 
         self.sm = ScreenManager(transition=NoTransition())
         self.home = HomeScreen(self, name="home")
         self.lab = LabScreen(self, name="lab")
         self.sm.add_widget(self.home); self.sm.add_widget(self.lab)
         Clock.schedule_once(lambda *_: self.reset_game(), .15)
-        Clock.schedule_interval(self.poll_capture, 1.0)
         return self.sm
 
     def show_home(self):
@@ -416,7 +421,7 @@ class MaestroMobileApp(App):
     def show_lab(self, focus_capture=False):
         self.sm.current = "lab"
         if focus_capture:
-            self.set_status("VISÃO", "Ative a captura para iniciar o diagnóstico de tela.")
+            self.set_status("VISÃO", "Módulo de captura de tela não incluído nesta build.")
 
     def reset_game(self):
         self.stop_ai()
@@ -536,58 +541,34 @@ class MaestroMobileApp(App):
         self.lab.status_detail.text = detail
 
     # ------------------------------------------------------------------
-    # Capture / vision control. Read-only observation; no input injection.
+    # Vision status. Nesta build o módulo de captura de tela Android não
+    # está incluído/empacotado (ver nota no topo do arquivo) — estes
+    # métodos só informam esse estado honestamente, sem simular captura.
     # ------------------------------------------------------------------
     def toggle_capture(self):
-        try:
-            active = bool(self.capture_status.get("active"))
-            if active:
-                self.capture.stop()
-            else:
-                self.capture.request_capture()
-        except Exception as exc:
-            self.set_status("CAPTURA", f"Erro: {exc}")
+        self.set_status("VISÃO", "Módulo de captura de tela não incluído nesta build.")
 
     def on_stop(self):
-        try:
-            if hasattr(self, "capture"):
-                self.capture.close()
-        except Exception:
-            pass
         super().on_stop()
 
-    def poll_capture(self, _dt):
-        try:
-            path = Path(self.user_data_dir) / "maestro_capture_status.json"
-            if path.exists():
-                self.capture_status = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            return
-        if not hasattr(self, "lab"): return
-        self.lab.capture_card.refresh(self.capture_status)
-        active = bool(self.capture_status.get("active"))
-        self.lab.capture_chip.text = "● CAPTURA ON" if active else "● CAPTURA OFF"
-        self.lab.capture_chip.active = active
-        if active:
-            p = self.capture_status.get("perception") or {}
-            scene = float(p.get("scene_confidence", 0))
-            self.lab.status_detail.text = f"Visão {scene:.0%} • {self.capture_status.get('fps',0):.1f} FPS • leitura somente"
-
     def open_diagnostics(self):
-        status = self.capture_status
-        p = status.get("perception") or {}
+        metrics = self.env.evaluation_metrics() if self.state else {}
         text = (
-            f"CAPTURA: {'ATIVA' if status.get('active') else 'INATIVA'}\n"
-            f"TELA: {status.get('width','—')} × {status.get('height','—')}\n"
-            f"FPS: {status.get('fps',0)}\n"
-            f"CAMPO: {float(p.get('field_confidence',0)):.0%}\n"
-            f"BOLA: {float(p.get('ball_confidence',0)):.0%}\n"
-            f"CENA: {float(p.get('scene_confidence',0)):.0%}\n"
-            f"INCERTO: {'SIM' if p.get('uncertain') else 'NÃO'}\n"
-            f"ERRO: {status.get('error') or 'nenhum'}"
+            "ENGINE: READY\n"
+            "SIMULATOR: READY\n"
+            f"AGENT: {'RUNNING' if self.autonomous else 'IDLE'}\n"
+            "VISION: NÃO INCLUÍDO NESTA BUILD\n"
+            "CAPTURE: N/D\n"
+            "FPS: --\n"
+            "FIELD: --\n"
+            "BALL: --\n"
+            "SCENE: --\n"
+            "UNCERTAINTY: N/D\n"
+            f"GOLS A/B: {metrics.get('gols_marcados',0)} / {metrics.get('gols_sofridos',0)}\n"
+            "ERROR: NONE"
         )
         from kivy.uix.popup import Popup
-        Popup(title="MAESTRO VISION • DIAGNÓSTICO", content=Label(text=text, color=TEXT,
+        Popup(title="MAESTRO • DIAGNÓSTICO", content=Label(text=text, color=TEXT,
               halign="left", valign="top"), size_hint=(.88,.62)).open()
 
     def open_agent_panel(self):
@@ -598,8 +579,8 @@ class MaestroMobileApp(App):
             f"VELOCIDADE: {self.speed:g}x\n"
             f"PASSOS: {self.state.time_step if self.state else 0}\n"
             f"GOLS A/B: {metrics.get('gols_marcados',0)} / {metrics.get('gols_sofridos',0)}\n\n"
-            "O agente usa somente o estado público do simulador.\n"
-            "A captura é observação e diagnóstico; não injeta comandos."
+            "O agente decide usando somente o estado público do\n"
+            "simulador (MaestroGridEnv) — nada externo ao jogo."
         )
         Popup(title="MAESTRO AGENT", content=Label(text=text, color=TEXT, halign="left", valign="top"),
               size_hint=(.88,.52)).open()

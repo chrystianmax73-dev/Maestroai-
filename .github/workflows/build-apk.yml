@@ -1,29 +1,32 @@
 name: Build Android APK
 
+# Builda o APK debug do Maestro (simulador + IA + interface Kivy) e
+# publica como artifact. Não modifica nenhum arquivo do projeto durante
+# a execução — o que é testado e empacotado é exatamente o código
+# commitado no repositório.
+
 on:
   push:
-    branches: [main, "feat/**"]
+    branches:
+      - main
+      - "feat/**"
     paths:
       - "maestro/**"
       - "app/**"
-      - "services/**"
-      - "android_src/**"
       - "main.py"
       - "buildozer.spec"
       - "requirements.txt"
       - "tests/**"
       - ".github/workflows/build-apk.yml"
   pull_request:
-    branches: [main]
-  workflow_dispatch:
-
-permissions:
-  contents: write
+    branches:
+      - main
+  workflow_dispatch: {}
 
 jobs:
   build-apk:
     runs-on: ubuntu-22.04
-    timeout-minutes: 120
+    timeout-minutes: 90
 
     steps:
       - name: Checkout
@@ -50,60 +53,12 @@ jobs:
           java -version
           python --version
 
-      - name: Enforce stable capture integration
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          p = Path("app/main.py")
-          text = p.read_text(encoding="utf-8")
-
-          if "from maestro.vision.capture_controller import CaptureController" not in text:
-              text = text.replace(
-                  "from maestro import Action, ActionType, HeuristicAgent, MaestroGridEnv\n",
-                  "from maestro import Action, ActionType, HeuristicAgent, MaestroGridEnv\nfrom maestro.vision.capture_controller import CaptureController\n",
-                  1,
-              )
-
-          old = """        self.capture_status = {}\n\n        self.sm = ScreenManager(transition=NoTransition())\n"""
-          new = """        self.capture_status = {}\n        self.capture = CaptureController(\n            status_callback=lambda t: self.set_status(\"CAPTURA\", t)\n        )\n\n        self.sm = ScreenManager(transition=NoTransition())\n"""
-          if old in text and "self.capture = CaptureController(" not in text:
-              text = text.replace(old, new, 1)
-
-          old = '''    # ------------------------------------------------------------------\n    # Capture / vision control. Read-only observation; no input injection.\n    # ------------------------------------------------------------------\n    def _capture_broadcast(self, action):\n        try:\n            from jnius import autoclass\n            PythonActivity = autoclass(\"org.kivy.android.PythonActivity\")\n            Intent = autoclass(\"android.content.Intent\")\n            intent = Intent(action)\n            intent.setPackage(PythonActivity.mActivity.getPackageName())\n            PythonActivity.mActivity.sendBroadcast(intent)\n            return True\n        except Exception as exc:\n            self.set_status(\"CAPTURA\", f\"Não foi possível enviar o comando: {exc}\")\n            return False\n\n    def toggle_capture(self):\n        active = bool(self.capture_status.get(\"active\"))\n        self._capture_broadcast(\"org.maestro.CAPTURE_STOP\" if active else \"org.maestro.CAPTURE_REQUEST\")\n        self.set_status(\"CAPTURA\", \"Solicitação enviada; aguardando status do Android.\")\n\n'''
-          new = '''    # ------------------------------------------------------------------\n    # Capture / vision control. Read-only observation; no input injection.\n    # ------------------------------------------------------------------\n    def toggle_capture(self):\n        try:\n            active = bool(self.capture_status.get(\"active\"))\n            if active:\n                self.capture.stop()\n            else:\n                self.capture.request_capture()\n        except Exception as exc:\n            self.set_status(\"CAPTURA\", f\"Erro: {exc}\")\n\n'''
-          if old in text:
-              text = text.replace(old, new, 1)
-          elif "def _capture_broadcast(self, action):" in text:
-              raise SystemExit("app/main.py ainda contém integração antiga de broadcast")
-
-          marker = '''    def poll_capture(self, _dt):\n'''
-          lifecycle = '''    def on_stop(self):\n        try:\n            if hasattr(self, \"capture\"):\n                self.capture.close()\n        except Exception:\n            pass\n        super().on_stop()\n\n'''
-          if lifecycle not in text:
-              if marker not in text:
-                  raise SystemExit("não encontrei poll_capture para inserir lifecycle")
-              text = text.replace(marker, lifecycle + marker, 1)
-
-          p.write_text(text, encoding="utf-8")
-          print("capture integration patch applied")
-          PY
-
-          if ! git diff --quiet -- app/main.py; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add app/main.py
-            git commit -m "fix(capture): use CaptureController for MediaProjection [skip ci]"
-            git push origin HEAD:main
-          fi
-
-      - name: Run tests
+      - name: Rodar testes (núcleo, IA, visão genérica, empacotamento)
         run: |
           python tests/test_env_integration.py
           python tests/test_heuristic_agent.py
           python tests/test_screen_perception.py
+          python tests/test_frame_source.py
           python tests/test_packaging.py
 
       - name: Install Buildozer
@@ -113,21 +68,17 @@ jobs:
           buildozer --version
 
       - name: Clean previous Android build state
-        run: |
-          rm -rf .buildozer bin
+        run: rm -rf .buildozer bin
 
       - name: Build APK
-        env:
-          JAVA_HOME: ${{ env.JAVA_HOME }}
-        run: |
-          yes | buildozer -v android debug
+        run: yes | buildozer -v android debug
 
-      - name: Verify APK
+      - name: Verify APK was produced
         run: |
           ls -lah bin/
           APK="$(find bin -maxdepth 1 -type f -name '*.apk' -print -quit)"
           test -n "$APK"
-          echo "APK_GERADO=$APK"
+          echo "APK_GERADO=$APK" >> "$GITHUB_ENV"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
