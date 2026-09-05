@@ -13,57 +13,41 @@ from kivy.clock import Clock
 from kivy.core.window import Window
 from kivy.graphics import Color, Ellipse, Line, Rectangle, RoundedRectangle
 from kivy.metrics import dp
-from kivy.properties import BooleanProperty, NumericProperty, ObjectProperty, StringProperty
+from kivy.properties import BooleanProperty, NumericProperty, ObjectProperty
 from kivy.uix.behaviors import ButtonBehavior
 from kivy.uix.boxlayout import BoxLayout
-from kivy.uix.button import Button
-from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.gridlayout import GridLayout
 from kivy.uix.label import Label
-from kivy.uix.screenmanager import Screen, ScreenManager, NoTransition
+from kivy.uix.screenmanager import NoTransition, Screen, ScreenManager
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.widget import Widget
 
-from maestro import Action, ActionType, HeuristicAgent, MaestroGridEnv
+from maestro import Action, ActionType, HeuristicAgent, MaestroGridEnv, TacticalEngine
 
-# NOTA DE ARQUITETURA: o módulo de captura de tela Android
-# (maestro/vision/capture_controller.py, services/capture.py, android_src/)
-# existe no repositório mas NÃO é importado nem empacotado nesta build.
-# Ele fica isolado como ponto de integração futuro (ver README/ARCHITECTURE),
-# sem nenhuma wiring ativa no app que é de fato compilado e distribuído.
-
-
-# ---------------------------------------------------------------------------
-# Visual system — designed for Maestro, not default Kivy controls.
-# ---------------------------------------------------------------------------
-BG = (0.031, 0.043, 0.055, 1)
-PANEL = (0.063, 0.078, 0.096, 1)
-PANEL_2 = (0.088, 0.106, 0.130, 1)
-PANEL_BORDER = (1, 1, 1, 0.06)
+BG = (0.025, 0.033, 0.043, 1)
+PANEL = (0.055, 0.068, 0.084, 1)
+PANEL_2 = (0.080, 0.098, 0.120, 1)
 TEXT = (0.94, 0.97, 0.99, 1)
-MUTED = (0.55, 0.61, 0.68, 1)
-ACCENT = (0.16, 0.85, 0.58, 1)      # verde Maestro — IA / positivo
-ACCENT_2 = (0.22, 0.58, 0.97, 1)    # azul — navegação / time A
-DANGER = (0.93, 0.32, 0.34, 1)
+MUTED = (0.48, 0.55, 0.63, 1)
+ACCENT = (0.16, 0.85, 0.58, 1)
+BLUE = (0.22, 0.58, 0.97, 1)
+RED = (0.93, 0.32, 0.34, 1)
 WARN = (0.97, 0.73, 0.24, 1)
-TEAM_A = (0.22, 0.58, 0.97, 1)
-TEAM_B = (0.93, 0.32, 0.34, 1)
-BALL = (1.0, 0.85, 0.20, 1)
-FIELD = (0.043, 0.24, 0.155, 1)
-FIELD_LINE = (0.80, 0.94, 0.86, 0.32)
-BRAND = (0.16, 0.85, 0.58, 1)
+FIELD = (0.035, 0.22, 0.14, 1)
+FIELD_LINE = (0.82, 0.94, 0.86, 0.35)
+BALL = (1.0, 0.84, 0.18, 1)
 
 
 class Panel(Widget):
-    radius = NumericProperty(14)
+    radius = NumericProperty(12)
     fill = ObjectProperty(PANEL)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.bind(pos=self._draw, size=self._draw, fill=self._draw)
-        self._draw()
+        self.bind(pos=self.draw, size=self.draw, fill=self.draw)
+        self.draw()
 
-    def _draw(self, *args):
+    def draw(self, *_):
         self.canvas.before.clear()
         with self.canvas.before:
             Color(*self.fill)
@@ -71,416 +55,323 @@ class Panel(Widget):
 
 
 class MaestroButton(ButtonBehavior, Label):
-    """Flat, high-contrast control used throughout the app."""
     active = BooleanProperty(False)
     fill = ObjectProperty(PANEL_2)
     active_fill = ObjectProperty(ACCENT)
 
     def __init__(self, **kwargs):
-        self.font_size = kwargs.pop("font_size", dp(13))
+        self.font_size = kwargs.pop("font_size", dp(12))
         self.bold = kwargs.pop("bold", True)
         super().__init__(**kwargs)
         self.halign = "center"
         self.valign = "middle"
-        self.bind(size=self._text_size, active=self._draw, pos=self._draw)
-        self._draw()
+        self.bind(size=self._text, pos=self.draw, active=self.draw)
+        self.draw()
 
-    def _text_size(self, *args):
+    def _text(self, *_):
         self.text_size = self.size
 
-    def _draw(self, *args):
+    def draw(self, *_):
         self.canvas.before.clear()
         with self.canvas.before:
             Color(*(self.active_fill if self.active else self.fill))
-            RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(10)])
+            RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(9)])
 
 
-class StatusDot(Widget):
+class Dot(Widget):
     active = BooleanProperty(False)
-    color = ObjectProperty(MUTED)
+    dot_color = ObjectProperty(MUTED)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.bind(pos=self._draw, size=self._draw, active=self._draw)
-        self._draw()
+        self.bind(pos=self.draw, size=self.draw, active=self.draw)
+        self.draw()
 
-    def _draw(self, *args):
+    def draw(self, *_):
         self.canvas.clear()
         with self.canvas:
-            Color(*(ACCENT if self.active else self.color))
+            Color(*(ACCENT if self.active else self.dot_color))
             Ellipse(pos=self.pos, size=self.size)
 
 
 class FieldWidget(Widget):
     state = ObjectProperty(None, allownone=True)
-    controlled_player_id = NumericProperty(-1)
+    selected_id = NumericProperty(-1)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.bind(size=self._redraw, pos=self._redraw, state=self._redraw,
-                  controlled_player_id=self._redraw)
+        self.bind(pos=self.draw, size=self.draw, state=self.draw, selected_id=self.draw)
 
-    def _cell_size(self):
+    def center(self, cell):
         if not self.state:
-            return 1.0, 1.0
-        return self.width / self.state.grid_cols, self.height / self.state.grid_rows
-
-    def _cell_center(self, col, row):
-        cw, ch = self._cell_size()
+            return self.center
+        cw = self.width / self.state.grid_cols
+        ch = self.height / self.state.grid_rows
+        col, row = cell
         return self.x + (col + .5) * cw, self.y + self.height - (row + .5) * ch
 
-    def _redraw(self, *args):
+    def draw(self, *_):
         self.canvas.clear()
         if not self.state:
             return
         cols, rows = self.state.grid_cols, self.state.grid_rows
-        cw, ch = self._cell_size()
+        cw, ch = self.width / cols, self.height / rows
         with self.canvas:
             Color(*FIELD)
             RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(12)])
-
-            # Textura sutil de listras do gramado (puramente decorativa)
             Color(1, 1, 1, .025)
-            stripe_w = self.width / 10
+            stripe = self.width / 10
             for i in range(0, 10, 2):
-                Rectangle(pos=(self.x + i * stripe_w, self.y), size=(stripe_w, self.height))
-
+                Rectangle(pos=(self.x + i * stripe, self.y), size=(stripe, self.height))
             Color(*FIELD_LINE)
-            Line(rectangle=(self.x, self.y, self.width, self.height), width=1.3)
+            Line(rectangle=(self.x, self.y, self.width, self.height), width=1.2)
             mx = self.x + self.width / 2
-            Line(points=[mx, self.y, mx, self.y + self.height], width=1.1)
-            circle_r = min(self.width, self.height) * .13
-            Line(circle=(mx, self.y + self.height / 2, circle_r), width=1.1)
-            Ellipse(pos=(mx - dp(1.5), self.y + self.height / 2 - dp(1.5)), size=(dp(3), dp(3)))
-
-            # Pequenas áreas junto às linhas de fundo (referência visual de gol)
-            box_w = self.width * .07
-            box_h = self.height * .34
-            Line(rectangle=(self.x, self.y + (self.height - box_h) / 2, box_w, box_h), width=1.0)
-            Line(rectangle=(self.x + self.width - box_w, self.y + (self.height - box_h) / 2, box_w, box_h), width=1.0)
-
-            # grid kept subtle because the simulator is grid-based
-            Color(1, 1, 1, .06)
+            Line(points=[mx, self.y, mx, self.y + self.height], width=1)
+            Line(circle=(mx, self.y + self.height / 2, min(self.width, self.height) * .13), width=1)
             for c in range(1, cols):
                 x = self.x + c * cw
-                Line(points=[x, self.y, x, self.y + self.height], width=.6)
+                Line(points=[x, self.y, x, self.y + self.height], width=.45)
             for r in range(1, rows):
                 y = self.y + r * ch
-                Line(points=[self.x, y, self.x + self.width, y], width=.6)
-
-            radius = min(cw, ch) * .31
+                Line(points=[self.x, y, self.x + self.width, y], width=.45)
+            radius = min(cw, ch) * .30
             for p in self.state.team_a:
-                self._player(p, TEAM_A, radius)
+                self._player(p, BLUE, radius)
             for p in self.state.team_b:
-                self._player(p, TEAM_B, radius)
-            bc, br = self.state.ball.cell
-            bx, by = self._cell_center(bc, br)
-            # sombra sutil sob a bola, pra dar profundidade
-            Color(0, 0, 0, .28)
-            Ellipse(pos=(bx - radius*.40, by - radius*.52), size=(radius*.80, radius*.30))
+                self._player(p, RED, radius)
+            bx, by = self.center(self.state.ball.cell)
             Color(*BALL)
-            Ellipse(pos=(bx - radius*.42, by - radius*.42), size=(radius*.84, radius*.84))
-            Color(0, 0, 0, .55)
-            Line(circle=(bx, by, radius*.42), width=.7)
-
-            if self.controlled_player_id >= 0:
+            Ellipse(pos=(bx - radius * .42, by - radius * .42), size=(radius * .84, radius * .84))
+            if self.selected_id >= 0:
                 try:
-                    cp = self.state.player_by_id(int(self.controlled_player_id))
-                    cx, cy = self._cell_center(*cp.cell)
+                    p = self.state.player_by_id(int(self.selected_id))
+                    x, y = self.center(p.cell)
                     Color(*BALL)
-                    Line(circle=(cx, cy, radius * 1.35), width=dp(2))
+                    Line(circle=(x, y, radius * 1.35), width=dp(2))
                 except KeyError:
                     pass
 
     def _player(self, player, color, radius):
-        x, y = self._cell_center(*player.cell)
-        Color(0, 0, 0, .22)
-        Ellipse(pos=(x-radius*.95, y-radius*1.05), size=(radius*1.9, radius*.55))
+        x, y = self.center(player.cell)
+        Color(0, 0, 0, .24)
+        Ellipse(pos=(x-radius, y-radius*.8), size=(radius*2, radius*.45))
         Color(*color)
         Ellipse(pos=(x-radius, y-radius), size=(radius*2, radius*2))
-        Color(1, 1, 1, .9)
-        Line(circle=(x, y, radius), width=1.0)
+        Color(1, 1, 1, .85)
+        Line(circle=(x, y, radius), width=.8)
 
 
 class PlayerLabels(Widget):
-    state = ObjectProperty(None, allownone=True)
-
     def __init__(self, field, **kwargs):
         super().__init__(**kwargs)
         self.field = field
         self.labels = {}
-        field.bind(state=self._rebuild)
-        self.bind(size=self._place, pos=self._place)
+        field.bind(state=self.rebuild)
+        self.bind(pos=self.place, size=self.place)
 
-    def _rebuild(self, *args):
-        for label in self.labels.values():
-            self.remove_widget(label)
+    def rebuild(self, *_):
+        for child in list(self.children):
+            self.remove_widget(child)
         self.labels.clear()
         if not self.field.state:
             return
         for p in self.field.state.all_players():
-            lab = Label(text=str(p.id), color=(1,1,1,1), bold=True,
-                        font_size=dp(9), size_hint=(None,None), size=(dp(22),dp(22)))
-            self.labels[p.id] = lab
-            self.add_widget(lab)
-        self._place()
+            label = Label(text=str(p.id), color=(1, 1, 1, 1), bold=True,
+                          font_size=dp(8), size_hint=(None, None), size=(dp(18), dp(18)))
+            self.labels[p.id] = label
+            self.add_widget(label)
+        self.place()
 
-    def _place(self, *args):
+    def place(self, *_):
         if not self.field.state:
             return
-        for pid, lab in self.labels.items():
+        for pid, label in self.labels.items():
             try:
-                p = self.field.state.player_by_id(pid)
-                lab.center = self.field._cell_center(*p.cell)
+                label.center = self.field.center(self.field.state.player_by_id(pid).cell)
             except KeyError:
                 pass
 
 
-class CaptureCard(Panel):
-    """Cartão de status do módulo de Visão.
-
-    Nesta build, o módulo de captura de tela Android não está incluído
-    (ver nota no topo do arquivo) — o cartão só informa isso, sem
-    oferecer nenhuma ação real de captura.
-    """
-
-    def __init__(self, app, **kwargs):
-        super().__init__(**kwargs)
-        self.app = app
-        box = BoxLayout(orientation="vertical", padding=dp(14), spacing=dp(6))
-        title = Label(text="MAESTRO VISION", color=TEXT, bold=True, font_size=dp(15),
-                      halign="left", valign="middle", size_hint_y=None, height=dp(26))
-        box.add_widget(title)
-        self.state_label = Label(text="NÃO INCLUÍDO NESTA BUILD", color=MUTED, font_size=dp(12),
-                                 halign="left", valign="middle", size_hint_y=None, height=dp(24))
-        box.add_widget(self.state_label)
-        row = BoxLayout(spacing=dp(6), size_hint_y=None, height=dp(38))
-        diag = MaestroButton(text="DIAGNÓSTICO", font_size=dp(11))
-        diag.bind(on_release=lambda *_: app.open_diagnostics())
-        row.add_widget(diag)
-        box.add_widget(row)
+class CandidateRow(Panel):
+    def __init__(self, candidate, rank, on_select, **kwargs):
+        super().__init__(size_hint_y=None, height=dp(56), radius=9, **kwargs)
+        box = BoxLayout(orientation="horizontal", padding=[dp(10), dp(5)], spacing=dp(8))
+        box.add_widget(Label(text=f"{rank:02d}", color=MUTED, bold=True, font_size=dp(10), size_hint_x=.10))
+        label = candidate.label
+        if candidate.action.target_id is not None:
+            label += f" → P{candidate.action.target_id}"
+        elif candidate.action.target_cell is not None:
+            label += f" → {candidate.action.target_cell[0]},{candidate.action.target_cell[1]}"
+        box.add_widget(Label(text=label, color=TEXT, bold=True, font_size=dp(11), halign="left", size_hint_x=.38))
+        box.add_widget(Label(text=f"{candidate.score:.2f}", color=ACCENT if candidate.score >= .65 else WARN,
+                             bold=True, font_size=dp(14), size_hint_x=.18))
+        why = Label(text=candidate.rationale, color=MUTED, font_size=dp(8.5), halign="left", size_hint_x=.34)
+        why.bind(size=lambda w, *_: setattr(w, "text_size", w.size))
+        box.add_widget(why)
         self.add_widget(box)
-
-    def refresh(self, status):
-        # Estático de propósito — sem módulo de captura não há status real
-        # pra mostrar, e não colocamos números/estado inventado aqui.
-        self.state_label.text = "NÃO INCLUÍDO NESTA BUILD"
-        self.state_label.color = MUTED
-
-
-class ModuleBadge(BoxLayout):
-    """Linha 'nome do módulo — status', usada na Home para dar uma visão
-    honesta do que está disponível nesta build."""
-
-    def __init__(self, label, status, ok=True, **kwargs):
-        super().__init__(orientation="horizontal", size_hint_y=None, height=dp(22), spacing=dp(8), **kwargs)
-        dot = StatusDot(active=ok, size_hint=(None, None), size=(dp(8), dp(8)),
-                         pos_hint={"center_y": .5})
-        self.add_widget(dot)
-        self.add_widget(Label(text=label, color=TEXT, font_size=dp(12), bold=True,
-                              halign="left", valign="middle", size_hint_x=.42))
-        self.add_widget(Label(text=status, color=(ACCENT if ok else MUTED),
-                              font_size=dp(11), halign="left", valign="middle"))
-
-
-class HomeScreen(Screen):
-    def __init__(self, app, **kwargs):
-        super().__init__(**kwargs)
-        self.app = app
-        root = FloatLayout()
-        self.add_widget(root)
-        root.add_widget(Panel(pos_hint={"x":0,"y":0}, size_hint=(1,1), fill=BG, radius=0))
-
-        content = BoxLayout(orientation="vertical", padding=[dp(26),dp(30),dp(26),dp(26)], spacing=dp(16),
-                            size_hint=(1,.86), pos_hint={"x":0,"y":.06})
-        root.add_widget(content)
-
-        brand_row = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(64), spacing=dp(2))
-        brand = Label(text="MAESTRO", color=TEXT, bold=True, font_size=dp(34),
-                      size_hint_y=None, height=dp(42), halign="left", valign="bottom")
-        brand.bind(size=lambda w,*_: setattr(w, "text_size", w.size))
-        brand_row.add_widget(brand)
-        sub = Label(text="LABORATÓRIO DE FUTEBOL  •  OFFLINE", color=ACCENT, bold=True,
-                    font_size=dp(11.5), size_hint_y=None, height=dp(20), halign="left")
-        sub.bind(size=lambda w,*_: setattr(w, "text_size", w.size))
-        brand_row.add_widget(sub)
-        content.add_widget(brand_row)
-
-        card = Panel(size_hint_y=None, height=dp(132), radius=16)
-        info = BoxLayout(orientation="vertical", padding=[dp(16),dp(14)], spacing=dp(7))
-        info.add_widget(Label(text="ESTADO DOS MÓDULOS", color=MUTED, font_size=dp(10), bold=True,
-                              size_hint_y=None, height=dp(16), halign="left"))
-        info.add_widget(ModuleBadge("SIMULADOR", "PRONTO", ok=True))
-        info.add_widget(ModuleBadge("AGENTE (IA)", "PRONTO", ok=True))
-        info.add_widget(ModuleBadge("VISÃO", "NÃO INCLUÍDA NESTA BUILD", ok=False))
-        card.add_widget(info)
-        content.add_widget(card)
-
-        content.add_widget(Widget(size_hint_y=None, height=dp(2)))
-
-        enter = MaestroButton(text="ENTRAR NO LABORATÓRIO", font_size=dp(15), active=True,
-                              size_hint_y=None, height=dp(58))
-        enter.bind(on_release=lambda *_: app.show_lab())
-        content.add_widget(enter)
-        vision = MaestroButton(text="VER DIAGNÓSTICO DE VISÃO", font_size=dp(12.5), fill=PANEL_2,
-                               size_hint_y=None, height=dp(46))
-        vision.bind(on_release=lambda *_: app.show_lab(focus_capture=True))
-        content.add_widget(vision)
-        content.add_widget(Widget())
-        footer = Label(text="MAESTRO v0.4  •  100% LOCAL  •  SEM CONEXÃO EXTERNA", color=MUTED,
-                       font_size=dp(9), size_hint_y=None, height=dp(20), halign="left")
-        footer.bind(size=lambda w,*_: setattr(w, "text_size", w.size))
-        content.add_widget(footer)
+        self.bind(on_touch_down=lambda w, touch: on_select(candidate) if w.collide_point(*touch.pos) else None)
 
 
 class LabScreen(Screen):
     def __init__(self, app, **kwargs):
         super().__init__(**kwargs)
         self.app = app
-        root = FloatLayout()
+        root = BoxLayout(orientation="vertical", padding=[dp(10), dp(8), dp(10), dp(8)], spacing=dp(7))
         self.add_widget(root)
-        root.add_widget(Panel(pos_hint={"x":0,"y":0}, size_hint=(1,1), fill=BG, radius=0))
 
-        top = BoxLayout(orientation="horizontal", padding=[dp(14),dp(10)], spacing=dp(8),
-                        size_hint=(1,None), height=dp(58), pos_hint={"x":0,"top":1})
-        root.add_widget(top)
-        back = MaestroButton(text="‹", font_size=dp(25), size_hint_x=None, width=dp(46))
-        back.bind(on_release=lambda *_: app.show_home())
-        top.add_widget(back)
-        title_box = BoxLayout(orientation="vertical")
-        title_box.add_widget(Label(text="MAESTRO", color=TEXT, bold=True, font_size=dp(17), halign="left"))
-        self.mode = Label(text="LABORATÓRIO • MANUAL", color=ACCENT, font_size=dp(9), halign="left")
-        title_box.add_widget(self.mode)
-        top.add_widget(title_box)
-        self.capture_chip = MaestroButton(text="● VISÃO N/D", font_size=dp(9), size_hint_x=None, width=dp(110))
-        self.capture_chip.bind(on_release=lambda *_: app.toggle_capture())
-        top.add_widget(self.capture_chip)
+        header = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(7))
+        header.add_widget(MaestroButton(text="‹", font_size=dp(24), size_hint_x=None, width=dp(40), on_release=lambda *_: app.show_home()))
+        title = BoxLayout(orientation="vertical")
+        title.add_widget(Label(text="MAESTRO / TACTICAL LAB", color=TEXT, bold=True, font_size=dp(15), halign="left"))
+        self.subtitle = Label(text="SIMULADOR • DECISÃO • EXECUÇÃO CONTROLADA", color=ACCENT, font_size=dp(8.5), halign="left"))
+        title.add_widget(self.subtitle)
+        header.add_widget(title)
+        self.run_chip = MaestroButton(text="● IDLE", font_size=dp(9), size_hint_x=None, width=dp(76))
+        header.add_widget(self.run_chip)
+        root.add_widget(header)
 
-        body = BoxLayout(orientation="vertical", padding=[dp(12),0,dp(12),dp(10)], spacing=dp(8),
-                         size_hint=(1,.89), pos_hint={"x":0,"y":0})
+        telemetry = BoxLayout(size_hint_y=None, height=dp(50), spacing=dp(6))
+        self.t_posse = self.metric(telemetry, "POSSE")
+        self.t_step = self.metric(telemetry, "STEP")
+        self.t_owner = self.metric(telemetry, "BALL OWNER")
+        self.t_pressure = self.metric(telemetry, "PRESSÃO")
+        self.t_action = self.metric(telemetry, "DECISÃO")
+        root.add_widget(telemetry)
+
+        body = BoxLayout(spacing=dp(7))
+        left = BoxLayout(orientation="vertical", spacing=dp(6), size_hint_x=.58)
+        field_panel = Panel(radius=12)
+        fp = BoxLayout(padding=dp(7))
+        field_panel.add_widget(fp)
+        self.field = FieldWidget()
+        fp.add_widget(self.field)
+        self.labels = PlayerLabels(self.field)
+        fp.add_widget(self.labels)
+        left.add_widget(field_panel)
+
+        controls = BoxLayout(size_hint_y=None, height=dp(82), spacing=dp(5))
+        self.play = MaestroButton(text="▶  IA AUTÔNOMA", active=True, font_size=dp(11))
+        self.play.bind(on_release=lambda *_: app.toggle_ai())
+        controls.add_widget(self.play)
+        self.pause = MaestroButton(text="Ⅱ", font_size=dp(11))
+        self.pause.bind(on_release=lambda *_: app.toggle_pause())
+        controls.add_widget(self.pause)
+        reset = MaestroButton(text="↻ NOVO", font_size=dp(11))
+        reset.bind(on_release=lambda *_: app.reset_game())
+        controls.add_widget(reset)
+        left.add_widget(controls)
+        body.add_widget(left)
+
+        right = BoxLayout(orientation="vertical", spacing=dp(6), size_hint_x=.42)
+        tactical = Panel(radius=12)
+        tbox = BoxLayout(orientation="vertical", padding=dp(9), spacing=dp(5))
+        head = BoxLayout(size_hint_y=None, height=dp(31))
+        head.add_widget(Label(text="DECISÕES CANDIDATAS", color=TEXT, bold=True, font_size=dp(11), halign="left"))
+        analyze = MaestroButton(text="ANALISAR", font_size=dp(8.5), size_hint_x=None, width=dp(75), active=True)
+        analyze.bind(on_release=lambda *_: app.analyze())
+        head.add_widget(analyze)
+        tbox.add_widget(head)
+        self.candidate_scroll = ScrollView(do_scroll_x=False)
+        self.candidate_box = BoxLayout(orientation="vertical", spacing=dp(4), size_hint_y=None)
+        self.candidate_box.bind(minimum_height=self.candidate_box.setter("height"))
+        self.candidate_scroll.add_widget(self.candidate_box)
+        tbox.add_widget(self.candidate_scroll)
+        tactical.add_widget(tbox)
+        right.add_widget(tactical)
+
+        log_panel = Panel(size_hint_y=None, height=dp(116), radius=12)
+        logbox = BoxLayout(orientation="vertical", padding=[dp(9), dp(6)], spacing=dp(3))
+        logbox.add_widget(Label(text="EVENT STREAM", color=MUTED, bold=True, font_size=dp(9), halign="left", size_hint_y=None, height=dp(17)))
+        self.log = Label(text="[000] sessão iniciada", color=TEXT, font_size=dp(8.5), halign="left", valign="top")
+        self.log.bind(size=lambda w, *_: setattr(w, "text_size", w.size))
+        logbox.add_widget(self.log)
+        log_panel.add_widget(logbox)
+        right.add_widget(log_panel)
+        body.add_widget(right)
         root.add_widget(body)
 
-        score = Panel(size_hint_y=None, height=dp(64), radius=12)
-        sb = BoxLayout(orientation="horizontal", padding=[dp(16),dp(8)], spacing=dp(10))
-        team_a_dot = StatusDot(active=True, color=TEAM_A, size_hint=(None,None), size=(dp(10),dp(10)))
-        sb.add_widget(team_a_dot)
-        self.score = Label(text="0   ×   0", color=TEXT, bold=True, font_size=dp(22), halign="left",
-                           size_hint_x=None, width=dp(90))
-        sb.add_widget(self.score)
-        team_b_dot = StatusDot(active=True, color=TEAM_B, size_hint=(None,None), size=(dp(10),dp(10)))
-        sb.add_widget(team_b_dot)
-        sb.add_widget(Widget())
-        self.clock = Label(text="t=0", color=MUTED, font_size=dp(12), halign="right")
-        sb.add_widget(self.clock)
-        score.add_widget(sb)
-        body.add_widget(score)
+        actions = BoxLayout(size_hint_y=None, height=dp(42), spacing=dp(5))
+        for name, typ in (("PASSE", ActionType.PASSE), ("DRIBLE", ActionType.DRIBLE),
+                          ("LANÇAMENTO", ActionType.LANCAMENTO), ("CRUZAMENTO", ActionType.CRUZAMENTO),
+                          ("FINALIZAR", ActionType.FINALIZAR)):
+            b = MaestroButton(text=name, font_size=dp(8.5))
+            b.bind(on_release=lambda _, t=typ: app.manual_action(t))
+            actions.add_widget(b)
+        root.add_widget(actions)
 
-        field_panel = Panel(size_hint_y=.44, radius=14)
-        fp = FloatLayout()  # FloatLayout não tem propriedade `padding` — causava TypeError no build()
-        field_panel.add_widget(fp)
-        self.field = FieldWidget(size_hint=(1,1), pos_hint={"x":0,"y":0})
-        fp.add_widget(self.field)
-        self.labels = PlayerLabels(self.field, size_hint=(1,1))
-        fp.add_widget(self.labels)
-        body.add_widget(field_panel)
+    @staticmethod
+    def metric(parent, name):
+        panel = Panel(radius=8)
+        box = BoxLayout(orientation="vertical", padding=[dp(6), dp(3)])
+        box.add_widget(Label(text=name, color=MUTED, bold=True, font_size=dp(7.5), size_hint_y=.45))
+        value = Label(text="--", color=TEXT, bold=True, font_size=dp(11), size_hint_y=.55, halign="left")
+        box.add_widget(value)
+        panel.add_widget(box)
+        parent.add_widget(panel)
+        return value
 
-        status_row = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(7))
-        self.status = Panel(radius=10)
-        status_box = BoxLayout(orientation="vertical", padding=[dp(10),dp(5)])
-        self.status_title = Label(text="PRONTO", color=ACCENT, bold=True, font_size=dp(11), halign="left")
-        self.status_detail = Label(text="Partida pronta para teste.", color=MUTED, font_size=dp(9), halign="left")
-        status_box.add_widget(self.status_title); status_box.add_widget(self.status_detail)
-        self.status.add_widget(status_box)
-        status_row.add_widget(self.status)
-        self.capture_card = CaptureCard(app, size_hint_x=.72, radius=10)
-        status_row.add_widget(self.capture_card)
-        body.add_widget(status_row)
 
-        controls = BoxLayout(orientation="vertical", size_hint_y=.32, spacing=dp(4))
-        controls.add_widget(Label(text="CONTROLE DA PARTIDA", color=MUTED, bold=True, font_size=dp(9),
-                                  size_hint_y=None, height=dp(15), halign="left"))
-        main_row = BoxLayout(spacing=dp(6), size_hint_y=None, height=dp(42))
-        self.play = MaestroButton(text="▶  JOGAR SOZINHO", active=True, font_size=dp(12))
-        self.play.bind(on_release=lambda *_: app.toggle_ai())
-        main_row.add_widget(self.play)
-        self.pause = MaestroButton(text="Ⅱ  PAUSAR", font_size=dp(12))
-        self.pause.bind(on_release=lambda *_: app.toggle_pause())
-        main_row.add_widget(self.pause)
-        reset = MaestroButton(text="↻  NOVO JOGO", font_size=dp(12))
-        reset.bind(on_release=lambda *_: app.reset_game())
-        main_row.add_widget(reset)
-        controls.add_widget(main_row)
-
-        controls.add_widget(Label(text="AÇÃO MANUAL", color=MUTED, bold=True, font_size=dp(9),
-                                  size_hint_y=None, height=dp(15), halign="left"))
-        action_row = GridLayout(cols=5, spacing=dp(5), size_hint_y=None, height=dp(40))
-        self.action_buttons = {}
-        for label, typ in [("PASSE",ActionType.PASSE),("DRIBLE",ActionType.DRIBLE),
-                           ("LANÇAMENTO",ActionType.LANCAMENTO),("CRUZAMENTO",ActionType.CRUZAMENTO),
-                           ("FINALIZAR",ActionType.FINALIZAR)]:
-            b = MaestroButton(text=label, font_size=dp(9), fill=PANEL_2)
-            b.bind(on_release=lambda _, t=typ: app.on_action_type(t))
-            self.action_buttons[typ] = b
-            action_row.add_widget(b)
-        controls.add_widget(action_row)
-        self.target_scroll = ScrollView(size_hint_y=None, height=dp(38), do_scroll_y=False)
-        self.target_box = BoxLayout(orientation="horizontal", spacing=dp(5), size_hint_x=None)
-        self.target_box.bind(minimum_width=self.target_box.setter("width"))
-        self.target_scroll.add_widget(self.target_box)
-        controls.add_widget(self.target_scroll)
-        body.add_widget(controls)
-
-        nav = BoxLayout(size_hint_y=None, height=dp(36), spacing=dp(5))
-        for text, cb in [("◎  VISÃO", app.open_diagnostics), ("⚙  AGENTE", app.open_agent_panel)]:
-            b = MaestroButton(text=text, font_size=dp(10), fill=PANEL_2)
-            b.bind(on_release=lambda *_x, c=cb: c())
-            nav.add_widget(b)
-        body.add_widget(nav)
+class HomeScreen(Screen):
+    def __init__(self, app, **kwargs):
+        super().__init__(**kwargs)
+        root = BoxLayout(orientation="vertical", padding=[dp(24), dp(28)], spacing=dp(14))
+        self.add_widget(root)
+        root.add_widget(Label(text="MAESTRO", color=TEXT, bold=True, font_size=dp(34), halign="left", size_hint_y=None, height=dp(45)))
+        root.add_widget(Label(text="TACTICAL LAB  /  OFFLINE SIMULATION", color=ACCENT, bold=True, font_size=dp(11), halign="left", size_hint_y=None, height=dp(22)))
+        intro = Panel(size_hint_y=None, height=dp(175), radius=16)
+        ib = BoxLayout(orientation="vertical", padding=dp(17), spacing=dp(7))
+        ib.add_widget(Label(text="O cérebro do Maestro", color=TEXT, bold=True, font_size=dp(17), halign="left", size_hint_y=None, height=dp(28)))
+        body = Label(text="Percepção → GameState → avaliação tática → decisão → execução no simulador.\n\nAs alternativas são calculadas e pontuadas antes da ação. O laboratório registra a decisão, o resultado e o estado seguinte.", color=MUTED, font_size=dp(11), halign="left", valign="top")
+        body.bind(size=lambda w, *_: setattr(w, "text_size", w.size))
+        ib.add_widget(body)
+        intro.add_widget(ib)
+        root.add_widget(intro)
+        enter = MaestroButton(text="ABRIR SALA TÁTICA", active=True, font_size=dp(15), size_hint_y=None, height=dp(58))
+        enter.bind(on_release=lambda *_: app.show_lab())
+        root.add_widget(enter)
+        root.add_widget(Label(text="SIMULADOR LOCAL  •  SEM CONTROLE DE APLICATIVOS EXTERNOS  •  v0.5", color=MUTED, font_size=dp(9), halign="left", size_hint_y=None, height=dp(20)))
+        root.add_widget(Widget())
 
 
 class MaestroMobileApp(App):
-    title = "Maestro"
-    BASE_AI_INTERVAL = .6
-    SPEEDS = (.5, 1, 2, 4)
+    title = "Maestro Tactical Lab"
+    INTERVAL = .55
 
     def build(self):
         Window.clearcolor = BG
         self.env = MaestroGridEnv(seed=42, max_steps=300)
+        self.agent = HeuristicAgent(seed=42)
+        self.tactics = TacticalEngine(self.env)
         self.state = None
         self.last_info = {}
-        self.agent = HeuristicAgent(seed=42)
         self.autonomous = False
         self.paused = False
-        self.speed = 1.0
         self.ai_event = None
-        self.pending_type: Optional[ActionType] = None
-        # Sem módulo de captura nesta build: capture_status fica sempre vazio,
-        # e a UI mostra isso honestamente em vez de inventar números.
-        self.capture_status = {}
-
+        self.history_text = []
         self.sm = ScreenManager(transition=NoTransition())
         self.home = HomeScreen(self, name="home")
         self.lab = LabScreen(self, name="lab")
-        self.sm.add_widget(self.home); self.sm.add_widget(self.lab)
+        self.sm.add_widget(self.home)
+        self.sm.add_widget(self.lab)
         Clock.schedule_once(lambda *_: self.reset_game(), .15)
         return self.sm
 
     def show_home(self):
-        self.stop_ai(); self.sm.current = "home"
+        self.stop_ai()
+        self.sm.current = "home"
 
-    def show_lab(self, focus_capture=False):
+    def show_lab(self):
         self.sm.current = "lab"
-        if focus_capture:
-            self.set_status("VISÃO", "Módulo de captura de tela não incluído nesta build.")
+        self.analyze()
 
     def reset_game(self):
         self.stop_ai()
         self.paused = False
         self.state, _ = self.env.reset()
         self.last_info = {}
-        self.lab.mode.text = "LABORATÓRIO • MANUAL"
-        self.lab.pause.text = "Ⅱ  PAUSAR"
-        self._refresh_ui()
+        self.history_text = ["[000] novo jogo / estado inicial"]
+        self.refresh()
+        self.analyze()
 
     def toggle_ai(self):
         if self.autonomous:
@@ -489,175 +380,114 @@ class MaestroMobileApp(App):
         self.autonomous = True
         self.paused = False
         self.lab.play.text = "■  PARAR IA"
-        self.lab.play.active = True
-        self.lab.mode.text = f"LABORATÓRIO • IA {self.speed:g}x"
+        self.lab.run_chip.text = "● RUN"
+        self.lab.subtitle.text = "SIMULADOR • IA AUTÔNOMA • LOOP TÁTICO"
         self.schedule_ai()
-        self.set_status("IA AUTÔNOMA", "O agente está decidindo pelo estado do simulador.")
+        self.append_log("IA iniciada / melhor candidato será executado")
 
     def stop_ai(self):
         self.autonomous = False
         if self.ai_event is not None:
-            self.ai_event.cancel(); self.ai_event = None
+            self.ai_event.cancel()
+            self.ai_event = None
         if hasattr(self, "lab"):
-            self.lab.play.text = "▶  JOGAR SOZINHO"
-            self.lab.play.active = True
-            self.lab.mode.text = "LABORATÓRIO • MANUAL"
+            self.lab.play.text = "▶  IA AUTÔNOMA"
+            self.lab.run_chip.text = "● IDLE"
+            self.lab.subtitle.text = "SIMULADOR • DECISÃO • EXECUÇÃO CONTROLADA"
 
     def toggle_pause(self):
         self.paused = not self.paused
-        self.lab.pause.text = "▶  CONTINUAR" if self.paused else "Ⅱ  PAUSAR"
-        if self.paused:
-            self.set_status("PAUSADO", "Simulação congelada. A captura pode continuar ativa.")
-        elif self.autonomous:
-            self.set_status("IA AUTÔNOMA", "Agente retomado.")
+        self.lab.pause.text = "▶" if self.paused else "Ⅱ"
+        self.append_log("loop pausado" if self.paused else "loop retomado")
 
     def schedule_ai(self):
         if self.ai_event is not None:
             self.ai_event.cancel()
-        self.ai_event = Clock.schedule_interval(self.ai_tick, self.BASE_AI_INTERVAL / self.speed)
+        self.ai_event = Clock.schedule_interval(self.ai_tick, self.INTERVAL)
 
     def ai_tick(self, _dt):
         if not self.autonomous or self.paused or not self.state:
             return
-        action = self.agent.decide(self.state, self.env)
-        if action is not None:
-            self.execute(action)
-        if self.state.time_step >= 300:
+        best = self.tactics.best(self.state, self.env)
+        if best is None:
             self.stop_ai()
+            return
+        self.execute(best.action, source=f"IA {best.label} {best.score:.2f}")
 
-    def on_action_type(self, action_type):
+    def analyze(self):
+        if not self.state:
+            return
+        candidates = self.tactics.evaluate(self.state, self.env)
+        self.lab.candidate_box.clear_widgets()
+        for i, candidate in enumerate(candidates[:7], 1):
+            row = CandidateRow(candidate, i, self.select_candidate)
+            self.lab.candidate_box.add_widget(row)
+        if candidates:
+            best = candidates[0]
+            self.lab.t_action.text = f"{best.label} {best.score:.2f}"
+
+    def select_candidate(self, candidate):
+        if not self.state or self.autonomous or self.paused:
+            return
+        self.lab.field.selected_id = self.state.owner().id if self.state.owner() else -1
+        self.execute(candidate.action, source=f"MANUAL CANDIDATO {candidate.label} {candidate.score:.2f}")
+
+    def manual_action(self, action_type):
         if self.autonomous or self.paused or not self.state:
             return
-        self.pending_type = action_type
-        self.rebuild_targets(action_type)
-        if action_type == ActionType.FINALIZAR:
-            owner = self.state.owner()
-            if owner: self.execute(Action(type=action_type, actor_id=owner.id))
-
-    def rebuild_targets(self, action_type):
-        self.lab.target_box.clear_widgets()
-        owner = self.state.owner() if self.state else None
-        if not owner or action_type == ActionType.FINALIZAR:
+        owner = self.state.owner()
+        if owner is None:
             return
-        if action_type in (ActionType.PASSE, ActionType.CRUZAMENTO):
-            targets = [p for p in self.state.team_of(owner.id) if p.id != owner.id]
-            for p in targets:
-                b = MaestroButton(text=f"JOGADOR {p.id}", font_size=dp(9), size_hint_x=None, width=dp(92))
-                b.bind(on_release=lambda _, pid=p.id: self.execute(Action(type=self.pending_type, actor_id=owner.id, target_id=pid)))
-                self.lab.target_box.add_widget(b)
+        if action_type == ActionType.FINALIZAR:
+            self.execute(Action(type=action_type, actor_id=owner.id), source="MANUAL FINALIZAR")
+            return
+        candidates = [c for c in self.tactics.evaluate(self.state, self.env) if c.action.type == action_type]
+        if candidates:
+            self.execute(candidates[0].action, source=f"MANUAL {action_type.value}")
         else:
-            direction = 1 if owner.team == "A" else -1
-            for dc, dr in [(direction,0),(direction,-1),(direction,1),(0,-1),(0,1)]:
-                cell=(owner.cell[0]+dc, owner.cell[1]+dr)
-                if 0 <= cell[0] < self.state.grid_cols and 0 <= cell[1] < self.state.grid_rows:
-                    b=MaestroButton(text=f"{cell[0]},{cell[1]}", font_size=dp(9), size_hint_x=None, width=dp(62))
-                    b.bind(on_release=lambda _, c=cell: self.execute(Action(type=self.pending_type, actor_id=owner.id, target_cell=c)))
-                    self.lab.target_box.add_widget(b)
+            self.append_log(f"sem candidato válido para {action_type.value}")
 
-    def execute(self, action):
+    def execute(self, action, source="EXEC"):
         try:
             self.state, reward, done, info = self.env.step(action)
             self.last_info = info
-            self.lab.target_box.clear_widgets()
-            self.pending_type = None
-            self._refresh_ui()
+            valid = bool(info.get("valid", False))
+            act = info.get("action", action.type.value)
+            result = "OK" if valid else "INVALID"
+            if info.get("goal"):
+                result = f"GOL {info['goal']}"
+            self.append_log(f"[{self.state.time_step:03d}] {source} → {act} / {result} / r={reward:.2f}")
+            self.refresh()
+            self.analyze()
             if done:
                 self.stop_ai()
-                self.set_status("FIM", "Partida encerrada. Use NOVO JOGO para reiniciar.")
+                self.append_log("partida encerrada")
         except Exception as exc:
-            self.set_status("ERRO", str(exc))
+            self.append_log(f"ERRO {type(exc).__name__}: {exc}")
 
-    def _refresh_ui(self):
-        if not self.state: return
+    def refresh(self):
+        if not self.state:
+            return
         self.lab.field.state = self.state
         owner = self.state.owner()
-        if owner and owner.team == "A":
-            self.lab.field.controlled_player_id = owner.id
+        self.lab.field.selected_id = owner.id if owner else -1
         metrics = self.env.evaluation_metrics()
-        self.lab.score.text = f"{metrics['gols_marcados']}   ×   {metrics['gols_sofridos']}"
-        self.lab.clock.text = f"t={self.state.time_step:03d}   posse={self.state.possession}"
-        info = self.last_info
-        act = info.get("action")
-        if info.get("valid") is False:
-            self.set_status("AÇÃO INVÁLIDA", str(info.get("reason", "motivo desconhecido")))
-        elif info.get("goal"):
-            self.set_status("GOL", f"Time {info['goal']} marcou.")
-        elif act:
-            self.set_status("ÚLTIMA AÇÃO", f"{act} • {'sucesso' if info.get('success') else 'falha'}")
+        pressure = self.state.pressure_on(owner.id) if owner else 0.0
+        self.lab.t_posse.text = self.state.possession
+        self.lab.t_step.text = f"{self.state.time_step:03d}"
+        self.lab.t_owner.text = f"P{owner.id}" if owner else "--"
+        self.lab.t_pressure.text = f"{pressure:.2f}"
+        self.lab.t_action.text = self.last_info.get("action", "ANALISANDO")
+        self.lab.log.text = "\n".join(self.history_text[-7:])
 
-    def set_status(self, title, detail):
-        if not hasattr(self, "lab"): return
-        self.lab.status_title.text = title
-        self.lab.status_detail.text = detail
-        colors = {
-            "AÇÃO INVÁLIDA": DANGER, "ERRO": DANGER,
-            "GOL": WARN, "FIM": WARN,
-            "IA AUTÔNOMA": ACCENT, "PRONTO": ACCENT,
-        }
-        self.lab.status_title.color = colors.get(title, TEXT)
-
-    # ------------------------------------------------------------------
-    # Vision status. Nesta build o módulo de captura de tela Android não
-    # está incluído/empacotado (ver nota no topo do arquivo) — estes
-    # métodos só informam esse estado honestamente, sem simular captura.
-    # ------------------------------------------------------------------
-    def toggle_capture(self):
-        self.set_status("VISÃO", "Módulo de captura de tela não incluído nesta build.")
+    def append_log(self, text):
+        self.history_text.append(text)
+        if hasattr(self, "lab"):
+            self.lab.log.text = "\n".join(self.history_text[-7:])
 
     def on_stop(self):
+        self.stop_ai()
         super().on_stop()
-
-    def open_diagnostics(self):
-        metrics = self.env.evaluation_metrics() if self.state else {}
-        rows = [
-            ("ENGINE", "READY", ACCENT),
-            ("SIMULATOR", "READY", ACCENT),
-            ("AGENT", "RUNNING" if self.autonomous else "IDLE", ACCENT if self.autonomous else MUTED),
-            ("VISION", "NÃO INCLUÍDO NESTA BUILD", MUTED),
-            ("CAPTURE", "N/D", MUTED),
-            ("FPS", "--", MUTED),
-            ("FIELD", "--", MUTED),
-            ("BALL", "--", MUTED),
-            ("SCENE", "--", MUTED),
-            ("UNCERTAINTY", "N/D", MUTED),
-            ("GOLS A/B", f"{metrics.get('gols_marcados',0)} / {metrics.get('gols_sofridos',0)}", TEXT),
-            ("ERROR", "NONE", ACCENT),
-        ]
-        self._open_stat_popup("MAESTRO • DIAGNÓSTICO", rows)
-
-    def open_agent_panel(self):
-        rows = [
-            ("MODO", "IA AUTÔNOMA" if self.autonomous else "MANUAL", ACCENT if self.autonomous else MUTED),
-            ("VELOCIDADE", f"{self.speed:g}x", TEXT),
-            ("PASSOS", str(self.state.time_step if self.state else 0), TEXT),
-        ]
-        if self.state:
-            metrics = self.env.evaluation_metrics()
-            rows.append(("GOLS A/B", f"{metrics.get('gols_marcados',0)} / {metrics.get('gols_sofridos',0)}", TEXT))
-        self._open_stat_popup(
-            "MAESTRO AGENT", rows,
-            footer="O agente decide usando somente o estado público\ndo simulador (MaestroGridEnv) — nada externo ao jogo.",
-        )
-
-    def _open_stat_popup(self, title, rows, footer=None):
-        from kivy.uix.popup import Popup
-        body = BoxLayout(orientation="vertical", padding=dp(16), spacing=dp(4))
-        for label, value, color in rows:
-            row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(26))
-            row.add_widget(Label(text=label, color=MUTED, bold=True, font_size=dp(11),
-                                 halign="left", valign="middle", size_hint_x=.5))
-            row.add_widget(Label(text=str(value), color=color, bold=True, font_size=dp(12),
-                                 halign="right", valign="middle", size_hint_x=.5))
-            body.add_widget(row)
-        if footer:
-            foot = Label(text=footer, color=MUTED, font_size=dp(10), halign="left", valign="top",
-                        size_hint_y=None, height=dp(40))
-            foot.bind(size=lambda w,*_: setattr(w, "text_size", w.size))
-            body.add_widget(Widget(size_hint_y=None, height=dp(6)))
-            body.add_widget(foot)
-        Popup(title=title, title_color=TEXT, separator_color=ACCENT,
-              content=body, size_hint=(.9, None), height=dp(44 + 30 * len(rows) + (56 if footer else 0))
-              ).open()
 
 
 if __name__ == "__main__":
