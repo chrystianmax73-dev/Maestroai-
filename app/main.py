@@ -36,20 +36,22 @@ from maestro import Action, ActionType, HeuristicAgent, MaestroGridEnv
 # ---------------------------------------------------------------------------
 # Visual system — designed for Maestro, not default Kivy controls.
 # ---------------------------------------------------------------------------
-BG = (0.035, 0.047, 0.060, 1)
-PANEL = (0.065, 0.080, 0.098, 1)
-PANEL_2 = (0.085, 0.102, 0.125, 1)
-TEXT = (0.93, 0.96, 0.98, 1)
-MUTED = (0.54, 0.60, 0.66, 1)
-ACCENT = (0.18, 0.82, 0.56, 1)
-ACCENT_2 = (0.18, 0.55, 0.95, 1)
-DANGER = (0.92, 0.30, 0.30, 1)
-WARN = (0.96, 0.72, 0.22, 1)
-TEAM_A = (0.18, 0.55, 0.95, 1)
-TEAM_B = (0.92, 0.28, 0.30, 1)
-BALL = (1.0, 0.84, 0.18, 1)
-FIELD = (0.055, 0.30, 0.19, 1)
-FIELD_LINE = (0.75, 0.92, 0.82, 0.35)
+BG = (0.031, 0.043, 0.055, 1)
+PANEL = (0.063, 0.078, 0.096, 1)
+PANEL_2 = (0.088, 0.106, 0.130, 1)
+PANEL_BORDER = (1, 1, 1, 0.06)
+TEXT = (0.94, 0.97, 0.99, 1)
+MUTED = (0.55, 0.61, 0.68, 1)
+ACCENT = (0.16, 0.85, 0.58, 1)      # verde Maestro — IA / positivo
+ACCENT_2 = (0.22, 0.58, 0.97, 1)    # azul — navegação / time A
+DANGER = (0.93, 0.32, 0.34, 1)
+WARN = (0.97, 0.73, 0.24, 1)
+TEAM_A = (0.22, 0.58, 0.97, 1)
+TEAM_B = (0.93, 0.32, 0.34, 1)
+BALL = (1.0, 0.85, 0.20, 1)
+FIELD = (0.043, 0.24, 0.155, 1)
+FIELD_LINE = (0.80, 0.94, 0.86, 0.32)
+BRAND = (0.16, 0.85, 0.58, 1)
 
 
 class Panel(Widget):
@@ -136,17 +138,29 @@ class FieldWidget(Widget):
         with self.canvas:
             Color(*FIELD)
             RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(12)])
+
+            # Textura sutil de listras do gramado (puramente decorativa)
+            Color(1, 1, 1, .025)
+            stripe_w = self.width / 10
+            for i in range(0, 10, 2):
+                Rectangle(pos=(self.x + i * stripe_w, self.y), size=(stripe_w, self.height))
+
             Color(*FIELD_LINE)
-            # outer lines and midfield
-            Line(rectangle=(self.x, self.y, self.width, self.height), width=1.2)
+            Line(rectangle=(self.x, self.y, self.width, self.height), width=1.3)
             mx = self.x + self.width / 2
-            Line(points=[mx, self.y, mx, self.y + self.height], width=1)
-            Ellipse(pos=(mx - min(self.width, self.height) * .12,
-                         self.y + self.height / 2 - min(self.width, self.height) * .12),
-                    size=(min(self.width, self.height) * .24, min(self.width, self.height) * .24),
-                    angle_start=0, angle_end=360)
+            Line(points=[mx, self.y, mx, self.y + self.height], width=1.1)
+            circle_r = min(self.width, self.height) * .13
+            Line(circle=(mx, self.y + self.height / 2, circle_r), width=1.1)
+            Ellipse(pos=(mx - dp(1.5), self.y + self.height / 2 - dp(1.5)), size=(dp(3), dp(3)))
+
+            # Pequenas áreas junto às linhas de fundo (referência visual de gol)
+            box_w = self.width * .07
+            box_h = self.height * .34
+            Line(rectangle=(self.x, self.y + (self.height - box_h) / 2, box_w, box_h), width=1.0)
+            Line(rectangle=(self.x + self.width - box_w, self.y + (self.height - box_h) / 2, box_w, box_h), width=1.0)
+
             # grid kept subtle because the simulator is grid-based
-            Color(1, 1, 1, .08)
+            Color(1, 1, 1, .06)
             for c in range(1, cols):
                 x = self.x + c * cw
                 Line(points=[x, self.y, x, self.y + self.height], width=.6)
@@ -161,8 +175,13 @@ class FieldWidget(Widget):
                 self._player(p, TEAM_B, radius)
             bc, br = self.state.ball.cell
             bx, by = self._cell_center(bc, br)
+            # sombra sutil sob a bola, pra dar profundidade
+            Color(0, 0, 0, .28)
+            Ellipse(pos=(bx - radius*.40, by - radius*.52), size=(radius*.80, radius*.30))
             Color(*BALL)
             Ellipse(pos=(bx - radius*.42, by - radius*.42), size=(radius*.84, radius*.84))
+            Color(0, 0, 0, .55)
+            Line(circle=(bx, by, radius*.42), width=.7)
 
             if self.controlled_player_id >= 0:
                 try:
@@ -175,10 +194,12 @@ class FieldWidget(Widget):
 
     def _player(self, player, color, radius):
         x, y = self._cell_center(*player.cell)
+        Color(0, 0, 0, .22)
+        Ellipse(pos=(x-radius*.95, y-radius*1.05), size=(radius*1.9, radius*.55))
         Color(*color)
         Ellipse(pos=(x-radius, y-radius), size=(radius*2, radius*2))
-        Color(1, 1, 1, .85)
-        Line(circle=(x, y, radius), width=.8)
+        Color(1, 1, 1, .9)
+        Line(circle=(x, y, radius), width=1.0)
 
 
 class PlayerLabels(Widget):
@@ -247,6 +268,21 @@ class CaptureCard(Panel):
         self.state_label.color = MUTED
 
 
+class ModuleBadge(BoxLayout):
+    """Linha 'nome do módulo — status', usada na Home para dar uma visão
+    honesta do que está disponível nesta build."""
+
+    def __init__(self, label, status, ok=True, **kwargs):
+        super().__init__(orientation="horizontal", size_hint_y=None, height=dp(22), spacing=dp(8), **kwargs)
+        dot = StatusDot(active=ok, size_hint=(None, None), size=(dp(8), dp(8)),
+                         pos_hint={"center_y": .5})
+        self.add_widget(dot)
+        self.add_widget(Label(text=label, color=TEXT, font_size=dp(12), bold=True,
+                              halign="left", valign="middle", size_hint_x=.42))
+        self.add_widget(Label(text=status, color=(ACCENT if ok else MUTED),
+                              font_size=dp(11), halign="left", valign="middle"))
+
+
 class HomeScreen(Screen):
     def __init__(self, app, **kwargs):
         super().__init__(**kwargs)
@@ -255,43 +291,45 @@ class HomeScreen(Screen):
         self.add_widget(root)
         root.add_widget(Panel(pos_hint={"x":0,"y":0}, size_hint=(1,1), fill=BG, radius=0))
 
-        content = BoxLayout(orientation="vertical", padding=[dp(24),dp(28),dp(24),dp(28)], spacing=dp(14),
-                            size_hint=(1,.82), pos_hint={"x":0,"y":.08})
+        content = BoxLayout(orientation="vertical", padding=[dp(26),dp(30),dp(26),dp(26)], spacing=dp(16),
+                            size_hint=(1,.86), pos_hint={"x":0,"y":.06})
         root.add_widget(content)
-        brand = Label(text="MAESTRO", color=TEXT, bold=True, font_size=dp(30),
-                      size_hint_y=None, height=dp(46), halign="left", valign="middle")
-        content.add_widget(brand)
-        sub = Label(text="LABORATÓRIO DE FUTEBOL • OFFLINE", color=ACCENT, bold=True,
-                    font_size=dp(11), size_hint_y=None, height=dp(24), halign="left")
-        content.add_widget(sub)
-        desc = Label(text="Ambiente de teste para simulação, visão e agente autônomo.",
-                     color=MUTED, font_size=dp(13), size_hint_y=None, height=dp(46),
-                     halign="left", valign="middle")
-        desc.bind(size=lambda *_: setattr(desc, "text_size", desc.size))
-        content.add_widget(desc)
 
-        card = Panel(size_hint_y=None, height=dp(110), radius=16)
-        info = BoxLayout(orientation="vertical", padding=dp(16), spacing=dp(4))
-        info.add_widget(Label(text="AMBIENTE", color=MUTED, font_size=dp(10), bold=True,
-                              size_hint_y=None, height=dp(20), halign="left"))
-        info.add_widget(Label(text="Simulador local + percepção de tela + agente", color=TEXT,
-                              font_size=dp(14), size_hint_y=None, height=dp(28), halign="left"))
-        info.add_widget(Label(text="Nenhuma conexão externa é necessária.", color=MUTED,
-                              font_size=dp(11), size_hint_y=None, height=dp(20), halign="left"))
+        brand_row = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(64), spacing=dp(2))
+        brand = Label(text="MAESTRO", color=TEXT, bold=True, font_size=dp(34),
+                      size_hint_y=None, height=dp(42), halign="left", valign="bottom")
+        brand.bind(size=lambda w,*_: setattr(w, "text_size", w.size))
+        brand_row.add_widget(brand)
+        sub = Label(text="LABORATÓRIO DE FUTEBOL  •  OFFLINE", color=ACCENT, bold=True,
+                    font_size=dp(11.5), size_hint_y=None, height=dp(20), halign="left")
+        sub.bind(size=lambda w,*_: setattr(w, "text_size", w.size))
+        brand_row.add_widget(sub)
+        content.add_widget(brand_row)
+
+        card = Panel(size_hint_y=None, height=dp(132), radius=16)
+        info = BoxLayout(orientation="vertical", padding=[dp(16),dp(14)], spacing=dp(7))
+        info.add_widget(Label(text="ESTADO DOS MÓDULOS", color=MUTED, font_size=dp(10), bold=True,
+                              size_hint_y=None, height=dp(16), halign="left"))
+        info.add_widget(ModuleBadge("SIMULADOR", "PRONTO", ok=True))
+        info.add_widget(ModuleBadge("AGENTE (IA)", "PRONTO", ok=True))
+        info.add_widget(ModuleBadge("VISÃO", "NÃO INCLUÍDA NESTA BUILD", ok=False))
         card.add_widget(info)
         content.add_widget(card)
+
+        content.add_widget(Widget(size_hint_y=None, height=dp(2)))
 
         enter = MaestroButton(text="ENTRAR NO LABORATÓRIO", font_size=dp(15), active=True,
                               size_hint_y=None, height=dp(58))
         enter.bind(on_release=lambda *_: app.show_lab())
         content.add_widget(enter)
-        vision = MaestroButton(text="TESTAR VISÃO / CAPTURA", font_size=dp(13),
+        vision = MaestroButton(text="VER DIAGNÓSTICO DE VISÃO", font_size=dp(12.5), fill=PANEL_2,
                                size_hint_y=None, height=dp(46))
         vision.bind(on_release=lambda *_: app.show_lab(focus_capture=True))
         content.add_widget(vision)
         content.add_widget(Widget())
-        footer = Label(text="MAESTRO v0.3 LAB • DIAGNÓSTICO LOCAL", color=MUTED,
+        footer = Label(text="MAESTRO v0.4  •  100% LOCAL  •  SEM CONEXÃO EXTERNA", color=MUTED,
                        font_size=dp(9), size_hint_y=None, height=dp(20), halign="left")
+        footer.bind(size=lambda w,*_: setattr(w, "text_size", w.size))
         content.add_widget(footer)
 
 
@@ -322,16 +360,22 @@ class LabScreen(Screen):
                          size_hint=(1,.89), pos_hint={"x":0,"y":0})
         root.add_widget(body)
 
-        score = Panel(size_hint_y=None, height=dp(58), radius=12)
-        sb = BoxLayout(orientation="horizontal", padding=[dp(14),dp(7)], spacing=dp(10))
-        self.score = Label(text="A  0   ×   0  B", color=TEXT, bold=True, font_size=dp(18), halign="left")
+        score = Panel(size_hint_y=None, height=dp(64), radius=12)
+        sb = BoxLayout(orientation="horizontal", padding=[dp(16),dp(8)], spacing=dp(10))
+        team_a_dot = StatusDot(active=True, color=TEAM_A, size_hint=(None,None), size=(dp(10),dp(10)))
+        sb.add_widget(team_a_dot)
+        self.score = Label(text="0   ×   0", color=TEXT, bold=True, font_size=dp(22), halign="left",
+                           size_hint_x=None, width=dp(90))
         sb.add_widget(self.score)
-        self.clock = Label(text="t=0", color=MUTED, font_size=dp(11), halign="right")
+        team_b_dot = StatusDot(active=True, color=TEAM_B, size_hint=(None,None), size=(dp(10),dp(10)))
+        sb.add_widget(team_b_dot)
+        sb.add_widget(Widget())
+        self.clock = Label(text="t=0", color=MUTED, font_size=dp(12), halign="right")
         sb.add_widget(self.clock)
         score.add_widget(sb)
         body.add_widget(score)
 
-        field_panel = Panel(size_hint_y=.48, radius=14)
+        field_panel = Panel(size_hint_y=.44, radius=14)
         fp = FloatLayout()  # FloatLayout não tem propriedade `padding` — causava TypeError no build()
         field_panel.add_widget(fp)
         self.field = FieldWidget(size_hint=(1,1), pos_hint={"x":0,"y":0})
@@ -343,7 +387,7 @@ class LabScreen(Screen):
         status_row = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(7))
         self.status = Panel(radius=10)
         status_box = BoxLayout(orientation="vertical", padding=[dp(10),dp(5)])
-        self.status_title = Label(text="PRONTO", color=TEXT, bold=True, font_size=dp(11), halign="left")
+        self.status_title = Label(text="PRONTO", color=ACCENT, bold=True, font_size=dp(11), halign="left")
         self.status_detail = Label(text="Partida pronta para teste.", color=MUTED, font_size=dp(9), halign="left")
         status_box.add_widget(self.status_title); status_box.add_widget(self.status_detail)
         self.status.add_widget(status_box)
@@ -352,8 +396,10 @@ class LabScreen(Screen):
         status_row.add_widget(self.capture_card)
         body.add_widget(status_row)
 
-        controls = BoxLayout(orientation="vertical", size_hint_y=.28, spacing=dp(6))
-        main_row = BoxLayout(spacing=dp(6))
+        controls = BoxLayout(orientation="vertical", size_hint_y=.32, spacing=dp(4))
+        controls.add_widget(Label(text="CONTROLE DA PARTIDA", color=MUTED, bold=True, font_size=dp(9),
+                                  size_hint_y=None, height=dp(15), halign="left"))
+        main_row = BoxLayout(spacing=dp(6), size_hint_y=None, height=dp(42))
         self.play = MaestroButton(text="▶  JOGAR SOZINHO", active=True, font_size=dp(12))
         self.play.bind(on_release=lambda *_: app.toggle_ai())
         main_row.add_widget(self.play)
@@ -365,12 +411,14 @@ class LabScreen(Screen):
         main_row.add_widget(reset)
         controls.add_widget(main_row)
 
-        action_row = GridLayout(cols=5, spacing=dp(5))
+        controls.add_widget(Label(text="AÇÃO MANUAL", color=MUTED, bold=True, font_size=dp(9),
+                                  size_hint_y=None, height=dp(15), halign="left"))
+        action_row = GridLayout(cols=5, spacing=dp(5), size_hint_y=None, height=dp(40))
         self.action_buttons = {}
         for label, typ in [("PASSE",ActionType.PASSE),("DRIBLE",ActionType.DRIBLE),
                            ("LANÇAMENTO",ActionType.LANCAMENTO),("CRUZAMENTO",ActionType.CRUZAMENTO),
                            ("FINALIZAR",ActionType.FINALIZAR)]:
-            b = MaestroButton(text=label, font_size=dp(9))
+            b = MaestroButton(text=label, font_size=dp(9), fill=PANEL_2)
             b.bind(on_release=lambda _, t=typ: app.on_action_type(t))
             self.action_buttons[typ] = b
             action_row.add_widget(b)
@@ -382,9 +430,11 @@ class LabScreen(Screen):
         controls.add_widget(self.target_scroll)
         body.add_widget(controls)
 
-        nav = BoxLayout(size_hint_y=None, height=dp(34), spacing=dp(5))
-        for text, cb in [("VISÃO", app.open_diagnostics), ("AGENTE", app.open_agent_panel)]:
-            b = MaestroButton(text=text, font_size=dp(9)); b.bind(on_release=lambda *_x, c=cb: c()); nav.add_widget(b)
+        nav = BoxLayout(size_hint_y=None, height=dp(36), spacing=dp(5))
+        for text, cb in [("◎  VISÃO", app.open_diagnostics), ("⚙  AGENTE", app.open_agent_panel)]:
+            b = MaestroButton(text=text, font_size=dp(10), fill=PANEL_2)
+            b.bind(on_release=lambda *_x, c=cb: c())
+            nav.add_widget(b)
         body.add_widget(nav)
 
 
@@ -524,7 +574,7 @@ class MaestroMobileApp(App):
         if owner and owner.team == "A":
             self.lab.field.controlled_player_id = owner.id
         metrics = self.env.evaluation_metrics()
-        self.lab.score.text = f"A  {metrics['gols_marcados']}   ×   {metrics['gols_sofridos']}  B"
+        self.lab.score.text = f"{metrics['gols_marcados']}   ×   {metrics['gols_sofridos']}"
         self.lab.clock.text = f"t={self.state.time_step:03d}   posse={self.state.possession}"
         info = self.last_info
         act = info.get("action")
@@ -539,6 +589,12 @@ class MaestroMobileApp(App):
         if not hasattr(self, "lab"): return
         self.lab.status_title.text = title
         self.lab.status_detail.text = detail
+        colors = {
+            "AÇÃO INVÁLIDA": DANGER, "ERRO": DANGER,
+            "GOL": WARN, "FIM": WARN,
+            "IA AUTÔNOMA": ACCENT, "PRONTO": ACCENT,
+        }
+        self.lab.status_title.color = colors.get(title, TEXT)
 
     # ------------------------------------------------------------------
     # Vision status. Nesta build o módulo de captura de tela Android não
@@ -553,37 +609,55 @@ class MaestroMobileApp(App):
 
     def open_diagnostics(self):
         metrics = self.env.evaluation_metrics() if self.state else {}
-        text = (
-            "ENGINE: READY\n"
-            "SIMULATOR: READY\n"
-            f"AGENT: {'RUNNING' if self.autonomous else 'IDLE'}\n"
-            "VISION: NÃO INCLUÍDO NESTA BUILD\n"
-            "CAPTURE: N/D\n"
-            "FPS: --\n"
-            "FIELD: --\n"
-            "BALL: --\n"
-            "SCENE: --\n"
-            "UNCERTAINTY: N/D\n"
-            f"GOLS A/B: {metrics.get('gols_marcados',0)} / {metrics.get('gols_sofridos',0)}\n"
-            "ERROR: NONE"
-        )
-        from kivy.uix.popup import Popup
-        Popup(title="MAESTRO • DIAGNÓSTICO", content=Label(text=text, color=TEXT,
-              halign="left", valign="top"), size_hint=(.88,.62)).open()
+        rows = [
+            ("ENGINE", "READY", ACCENT),
+            ("SIMULATOR", "READY", ACCENT),
+            ("AGENT", "RUNNING" if self.autonomous else "IDLE", ACCENT if self.autonomous else MUTED),
+            ("VISION", "NÃO INCLUÍDO NESTA BUILD", MUTED),
+            ("CAPTURE", "N/D", MUTED),
+            ("FPS", "--", MUTED),
+            ("FIELD", "--", MUTED),
+            ("BALL", "--", MUTED),
+            ("SCENE", "--", MUTED),
+            ("UNCERTAINTY", "N/D", MUTED),
+            ("GOLS A/B", f"{metrics.get('gols_marcados',0)} / {metrics.get('gols_sofridos',0)}", TEXT),
+            ("ERROR", "NONE", ACCENT),
+        ]
+        self._open_stat_popup("MAESTRO • DIAGNÓSTICO", rows)
 
     def open_agent_panel(self):
-        from kivy.uix.popup import Popup
-        metrics = self.env.evaluation_metrics() if self.state else {}
-        text = (
-            f"MODO: {'IA AUTÔNOMA' if self.autonomous else 'MANUAL'}\n"
-            f"VELOCIDADE: {self.speed:g}x\n"
-            f"PASSOS: {self.state.time_step if self.state else 0}\n"
-            f"GOLS A/B: {metrics.get('gols_marcados',0)} / {metrics.get('gols_sofridos',0)}\n\n"
-            "O agente decide usando somente o estado público do\n"
-            "simulador (MaestroGridEnv) — nada externo ao jogo."
+        rows = [
+            ("MODO", "IA AUTÔNOMA" if self.autonomous else "MANUAL", ACCENT if self.autonomous else MUTED),
+            ("VELOCIDADE", f"{self.speed:g}x", TEXT),
+            ("PASSOS", str(self.state.time_step if self.state else 0), TEXT),
+        ]
+        if self.state:
+            metrics = self.env.evaluation_metrics()
+            rows.append(("GOLS A/B", f"{metrics.get('gols_marcados',0)} / {metrics.get('gols_sofridos',0)}", TEXT))
+        self._open_stat_popup(
+            "MAESTRO AGENT", rows,
+            footer="O agente decide usando somente o estado público\ndo simulador (MaestroGridEnv) — nada externo ao jogo.",
         )
-        Popup(title="MAESTRO AGENT", content=Label(text=text, color=TEXT, halign="left", valign="top"),
-              size_hint=(.88,.52)).open()
+
+    def _open_stat_popup(self, title, rows, footer=None):
+        from kivy.uix.popup import Popup
+        body = BoxLayout(orientation="vertical", padding=dp(16), spacing=dp(4))
+        for label, value, color in rows:
+            row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(26))
+            row.add_widget(Label(text=label, color=MUTED, bold=True, font_size=dp(11),
+                                 halign="left", valign="middle", size_hint_x=.5))
+            row.add_widget(Label(text=str(value), color=color, bold=True, font_size=dp(12),
+                                 halign="right", valign="middle", size_hint_x=.5))
+            body.add_widget(row)
+        if footer:
+            foot = Label(text=footer, color=MUTED, font_size=dp(10), halign="left", valign="top",
+                        size_hint_y=None, height=dp(40))
+            foot.bind(size=lambda w,*_: setattr(w, "text_size", w.size))
+            body.add_widget(Widget(size_hint_y=None, height=dp(6)))
+            body.add_widget(foot)
+        Popup(title=title, title_color=TEXT, separator_color=ACCENT,
+              content=body, size_hint=(.9, None), height=dp(44 + 30 * len(rows) + (56 if footer else 0))
+              ).open()
 
 
 if __name__ == "__main__":
