@@ -50,23 +50,22 @@ def test_buildozer_spec_has_required_keys():
     print("TESTE PACKAGING 1 OK — chaves obrigatórias do buildozer.spec presentes")
 
 
-def test_buildozer_spec_does_not_package_capture_module():
+def test_buildozer_spec_packages_authorized_capture_module():
     parser = configparser.ConfigParser()
     parser.read(ROOT / "buildozer.spec", encoding="utf-8")
     app = parser["app"]
-    assert "services" not in app, "build não deve declarar o serviço de captura Android"
-    assert "android.add_src" not in app, "build não deve compilar android_src/ (Java de captura)"
+    assert app.get("services") == "capture:services/capture.py"
+    assert app.get("android.add_src") == "android_src"
     perms = app.get("android.permissions", "")
-    for forbidden in ("SYSTEM_ALERT_WINDOW", "FOREGROUND_SERVICE_MEDIA_PROJECTION", "FOREGROUND_SERVICE"):
-        assert forbidden not in perms, f"permissão de captura não deveria estar no build: {forbidden}"
+    for required_permission in ("SYSTEM_ALERT_WINDOW", "FOREGROUND_SERVICE_MEDIA_PROJECTION", "FOREGROUND_SERVICE"):
+        assert required_permission in perms, f"permissão ausente: {required_permission}"
     patterns = parser["app"].get("source.include_patterns", "")
-    assert "services/**" not in patterns
-    assert "android_src/**" not in patterns
-    print("TESTE PACKAGING 2 OK — build não referencia serviço/permissões/fontes de captura")
+    assert "services/**" in patterns
+    print("TESTE PACKAGING 2 OK — build inclui captura autorizada e permissões necessárias")
 
 
-def test_capture_sources_still_exist_but_are_isolated():
-    """Confirma que nada foi apagado — só desconectado do build."""
+def test_capture_sources_exist_and_are_packaged():
+    """Confirma que as fontes da captura autorizada estão preservadas."""
     for rel in (
         "services/capture.py",
         "android_src/org/maestro/capture/CaptureActivity.java",
@@ -74,27 +73,24 @@ def test_capture_sources_still_exist_but_are_isolated():
         "maestro/vision/capture_controller.py",
     ):
         assert (ROOT / rel).exists(), f"arquivo isolado não deveria ter sido removido: {rel}"
-    print("TESTE PACKAGING 3 OK — arquivos de captura preservados no repositório (não apagados)")
+    print("TESTE PACKAGING 3 OK — arquivos de captura preservados no repositório")
 
 
-def test_app_main_does_not_wire_capture():
+def test_capture_controller_is_optional_on_desktop():
     app_src = (ROOT / "app" / "main.py").read_text(encoding="utf-8")
-    # Um comentário explicando o isolamento pode mencionar o nome do
-    # módulo — o que não pode existir é o IMPORT ou a CHAMADA reais.
-    assert "from maestro.vision.capture_controller import" not in app_src
-    assert "CaptureController(" not in app_src  # instanciação
-    assert "request_capture()" not in app_src
-    print("TESTE PACKAGING 4 OK — app/main.py não importa nem instancia o CaptureController")
+    assert "CaptureController" in app_src
+    assert "request_capture" in app_src
+    print("TESTE PACKAGING 4 OK — captura é integrada sem impedir o modo desktop")
 
 
 def test_app_main_has_lab_controls():
     app_src = (ROOT / "app" / "main.py").read_text(encoding="utf-8")
     for label in (
-        "ENTRAR NO LABORATÓRIO", "JOGAR SOZINHO", "NOVO JOGO",
+        "ABRIR SALA TÁTICA", "IA AUTÔNOMA", "NOVO",
         "PASSE", "DRIBLE", "LANÇAMENTO", "CRUZAMENTO", "FINALIZAR",
     ):
         assert label in app_src, f"controle de UI ausente: {label}"
-    assert "ScreenManager" in app_src and "open_diagnostics" in app_src
+    assert "ScreenManager" in app_src and "analyze" in app_src
     print("TESTE PACKAGING 5 OK — controles do laboratório presentes na UI")
 
 

@@ -22,6 +22,7 @@ from kivy.uix.scrollview import ScrollView
 from kivy.uix.widget import Widget
 
 from maestro import Action, ActionType, HeuristicAgent, MaestroGridEnv, TacticalEngine
+from maestro.vision.capture_controller import CaptureController
 
 BG = (0.025, 0.033, 0.043, 1)
 PANEL = (0.055, 0.068, 0.084, 1)
@@ -321,6 +322,9 @@ class HomeScreen(Screen):
         enter = MaestroButton(text="ABRIR SALA TÁTICA", active=True, font_size=dp(15), size_hint_y=None, height=dp(58))
         enter.bind(on_release=lambda *_: app.show_lab())
         root.add_widget(enter)
+        capture = MaestroButton(text="ATIVAR CAPTURA ANDROID", active=False, font_size=dp(11), size_hint_y=None, height=dp(42))
+        capture.bind(on_release=lambda *_: app.request_capture())
+        root.add_widget(capture)
         root.add_widget(Label(text="SIMULADOR LOCAL  •  SEM CONTROLE DE APLICATIVOS EXTERNOS  •  v0.5", color=MUTED, font_size=dp(9), halign="left", size_hint_y=None, height=dp(20)))
         root.add_widget(Widget())
 
@@ -340,6 +344,7 @@ class MaestroMobileApp(App):
         self.paused = False
         self.ai_event = None
         self.history_text = []
+        self.capture = CaptureController(self.append_log)
         self.sm = ScreenManager(transition=NoTransition())
         self.home = HomeScreen(self, name="home")
         self.lab = LabScreen(self, name="lab")
@@ -355,6 +360,11 @@ class MaestroMobileApp(App):
     def show_lab(self):
         self.sm.current = "lab"
         self.analyze()
+
+    def request_capture(self):
+        """Inicia MediaProjection somente após ação e consentimento do usuário."""
+        if not self.capture.request_capture():
+            self.append_log("captura Android indisponível ou aguardando permissão")
 
     def reset_game(self):
         self.stop_ai()
@@ -478,6 +488,7 @@ class MaestroMobileApp(App):
 
     def on_stop(self):
         self.stop_ai()
+        self.capture.close()
         super().on_stop()
 
 

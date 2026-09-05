@@ -10,6 +10,15 @@ from .maestro_grid_env_v2 import (
 )
 from .heuristic_agent import HeuristicAgent
 from .tactical_engine import TacticalEngine, TacticalCandidate
+from .pipeline_models import (
+    Point,
+    PlayerObservation,
+    PerceptionSnapshot,
+    TacticalDecision,
+    TacticalOption,
+    ExecutionResult,
+)
+from .pipeline import ResearchPipeline
 
 __all__ = [
     "MaestroGridEnv",
@@ -22,4 +31,11 @@ __all__ = [
     "HeuristicAgent",
     "TacticalEngine",
     "TacticalCandidate",
+    "Point",
+    "PlayerObservation",
+    "PerceptionSnapshot",
+    "TacticalDecision",
+    "TacticalOption",
+    "ExecutionResult",
+    "ResearchPipeline",
 ]

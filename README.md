@@ -23,8 +23,8 @@ times), sem intervenção manual.
 
 ## Interface
 
-- **Home**: estado dos módulos (Simulador/Agente prontos, Visão não
-  incluída nesta build) e acesso ao Laboratório.
+- **Home**: estado dos módulos (Simulador/Agente prontos), acesso ao
+  Laboratório e acionamento explícito da captura Android.
 - **Laboratório**: campo, placar, controles de partida (JOGAR SOZINHO
   / PAUSAR / NOVO JOGO), ações manuais (PASSE/DRIBLE/LANÇAMENTO/
   CRUZAMENTO/FINALIZAR), e acesso a Diagnóstico e Agente.
@@ -48,10 +48,8 @@ sabe nada sobre Kivy, Android ou de onde o frame veio.
 `FileFrameSource` (lê imagens fornecidas explicitamente no disco).
 
 Um adapter de captura real de tela Android (`services/capture.py`,
-`android_src/`, `maestro/vision/capture_controller.py`) existe no
-repositório mas **não é importado nem empacotado** nesta build — ver
-ARCHITECTURE.md para o porquê e como retomar isso seguindo o mesmo
-contrato de `FrameSource`.
+`android_src/`, `maestro/vision/capture_controller.py`) é empacotado
+como serviço opcional e só inicia após autorização explícita do usuário.
 
 ## Estrutura do projeto
 
@@ -69,8 +67,8 @@ maestro_mobile/
 │       ├── screen_perception.py # análise genérica de frame
 │       └── frame_source.py      # FrameSource + Synthetic/File
 ├── app/main.py                  # interface Kivy (Home + Laboratório)
-├── services/capture.py          # ISOLADO — não empacotado
-├── android_src/                 # ISOLADO — não empacotado
+├── services/capture.py          # serviço MediaProjection autorizado
+├── android_src/                 # classes Java da integração Android
 └── tests/
     ├── test_env_integration.py
     ├── test_heuristic_agent.py
@@ -126,3 +124,21 @@ O APK sai em `bin/*.apk`. Primeira compilação baixa NDK/SDK e leva
   online, ou qualquer controle de aplicativo externo — deliberadamente
   não implementado (ver ARCHITECTURE.md).
 - Sem sons, animações ou rede.
+
+## Pipeline de pesquisa integrado
+
+A versão atual organiza o experimento em contratos independentes:
+
+```text
+FrameSource → ScreenPerception → PerceptionSnapshot → GameStateAdapter
+→ GameState → TacticalEngine → TacticalDecision → Executor → ExecutionResult
+→ SessionRecorder
+```
+
+`maestro/pipeline_models.py` contém os modelos serializáveis; `GameStateAdapter` converte coordenadas normalizadas para a grade; `ResearchPipeline` calcula a decisão sem acoplar a interface; e `SessionRecorder` salva sessões em JSON Lines com percepção, estado, alternativas, decisão e resultado.
+
+O APK inclui uma captura Android opcional baseada em **MediaProjection**. Ela só é iniciada depois de o usuário tocar em `ATIVAR CAPTURA ANDROID` e conceder a permissão do sistema. O serviço foreground é empacotado por `buildozer.spec`, mas o modo desktop continua funcionando sem Android ou jnius.
+
+O `ExternalExecutorClient` permite conectar um processo de teste autorizado por JSONL. A interface aceita somente operações semânticas (`observe`, `tap`, `swipe`, `key` e `wait`); não implementa leitura de memória, code injection, hooks ou execução arbitrária de shell. O processo externo deve ser iniciado pelo operador e devolver uma resposta JSON com `request_id`, `success`, `error` e, opcionalmente, `observed_state`.
+
+Para validar o cérebro sem depender de um dispositivo, execute `python tests/test_pipeline.py`. A captura real depende das permissões do Android e deve ser validada em um dispositivo de teste autorizado.

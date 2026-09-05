@@ -9,6 +9,8 @@ on:
       - "main.py"
       - "buildozer.spec"
       - "requirements.txt"
+      - "services/**"
+      - "android_src/**"
       - "tests/**"
       - ".github/workflows/build-apk.yml"
   pull_request:
@@ -46,6 +48,7 @@ jobs:
           python tests/test_execution_loop.py
           python tests/test_tactical_engine.py
           python tests/test_runtime_coordinator.py
+          python tests/test_pipeline.py
           python tests/test_packaging.py
       - name: Install Buildozer
         run: |
